@@ -83,17 +83,17 @@ export default function QuizView() {
       setSelectedAnswer(null);
       setShowFeedback(false);
     } else {
+      // Calculate final correct count including the current (last) answer
+      const finalCorrect = correctCount + (selectedAnswer === currentQuestion?.correct_answer ? 1 : 0);
+      setCorrectCount(finalCorrect);
       setFinished(true);
-      saveResult();
+      saveResult(finalCorrect);
     }
   };
 
-  const saveResult = async () => {
+  const saveResult = async (finalCorrect: number) => {
     if (!user || !profile || alreadyPassed) return;
-    const finalScore = Math.round(((correctCount + (isCorrect ? 0 : 0)) / questions.length) * 100);
-    // recalc since correctCount may not include last answer yet
-    const actualCorrect = correctCount + (selectedAnswer === currentQuestion?.correct_answer ? 0 : 0);
-    const score = Math.round((actualCorrect / questions.length) * 100);
+    const score = Math.round((finalCorrect / questions.length) * 100);
     const passed = score >= (quiz?.passing_score || 70);
 
     try {

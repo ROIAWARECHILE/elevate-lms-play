@@ -45,10 +45,10 @@ export default function Onboarding() {
       if (profileError) throw profileError;
 
       // Add admin role
-      await supabase.from("user_roles").upsert({
-        user_id: user.id,
-        role: "admin" as any,
-      });
+      await supabase.from("user_roles").upsert(
+        { user_id: user.id, role: "admin" as any },
+        { onConflict: "user_id,role" }
+      );
 
       await refreshProfile();
       toast({ title: "¡Workspace creado!", description: `Bienvenido a ${companyName}` });

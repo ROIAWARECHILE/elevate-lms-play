@@ -17,6 +17,9 @@ import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
 import CreateCourse from "./pages/admin/CreateCourse";
 import EditCourse from "./pages/admin/EditCourse";
+import AdminUsers from "./pages/admin/AdminUsers";
+import AdminAnalytics from "./pages/admin/AdminAnalytics";
+import AdminSettings from "./pages/admin/AdminSettings";
 import QuizView from "./pages/QuizView";
 import { AppLayout } from "./components/AppLayout";
 import NotFound from "./pages/NotFound";
@@ -50,6 +53,9 @@ const App = () => (
               <Route path="admin/courses" element={<AdminCourses />} />
               <Route path="admin/courses/new" element={<CreateCourse />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />
+              <Route path="admin/users" element={<AdminUsers />} />
+              <Route path="admin/analytics" element={<AdminAnalytics />} />
+              <Route path="admin/settings" element={<AdminSettings />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

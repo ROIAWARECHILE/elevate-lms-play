@@ -1,13 +1,39 @@
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Zap, Flame, Trophy, Award, BookOpen } from "lucide-react";
 
 export default function Profile() {
   const { user, profile } = useAuth();
+  const [completedCourses, setCompletedCourses] = useState(0);
 
-  const xpForNextLevel = (profile?.level || 1) * 100;
-  const xpProgress = ((profile?.xp_total || 0) % 100) / xpForNextLevel * 100;
+  const level = profile?.level || 1;
+  const xpTotal = profile?.xp_total || 0;
+  const xpForNextLevel = level * 100;
+  // XP progress within current level
+  const xpInCurrentLevel = xpTotal - ((level - 1) * 100);
+  const xpProgress = Math.min((xpInCurrentLevel / 100) * 100, 100);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchStats = async () => {
+      // Count distinct courses where the user has completed at least one lesson
+      const { data } = await supabase
+        .from("user_progress")
+        .select("course_id")
+        .eq("user_id", user.id)
+        .eq("completed", true)
+        .not("course_id", "is", null);
+
+      if (data) {
+        const uniqueCourses = new Set(data.map((r) => r.course_id));
+        setCompletedCourses(uniqueCourses.size);
+      }
+    };
+    fetchStats();
+  }, [user]);
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -28,10 +54,10 @@ export default function Profile() {
           <div className="flex items-center justify-between mb-2">
             <span className="font-semibold flex items-center gap-2">
               <Trophy className="w-5 h-5 text-primary" />
-              Nivel {profile?.level || 1}
+              Nivel {level}
             </span>
             <span className="text-sm text-muted-foreground">
-              {profile?.xp_total || 0} / {xpForNextLevel} XP
+              {xpInCurrentLevel} / 100 XP
             </span>
           </div>
           <Progress value={xpProgress} className="h-3" />
@@ -41,10 +67,10 @@ export default function Profile() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-4">
         {[
-          { label: "XP Total", value: profile?.xp_total || 0, icon: Zap, color: "text-xp", bg: "bg-xp/10" },
+          { label: "XP Total", value: xpTotal, icon: Zap, color: "text-xp", bg: "bg-xp/10" },
           { label: "Racha actual", value: `${profile?.current_streak || 0} días`, icon: Flame, color: "text-streak", bg: "bg-streak/10" },
           { label: "Mejor racha", value: `${profile?.longest_streak || 0} días`, icon: Award, color: "text-primary", bg: "bg-primary/10" },
-          { label: "Cursos completados", value: 0, icon: BookOpen, color: "text-success", bg: "bg-success/10" },
+          { label: "Cursos completados", value: completedCourses, icon: BookOpen, color: "text-success", bg: "bg-success/10" },
         ].map((stat) => (
           <Card key={stat.label} className="shadow-card">
             <CardContent className="p-4 flex items-center gap-3">
