@@ -4,10 +4,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, BookOpen, CheckCircle2, Lock, Clock, Zap } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, Clock, Zap, Brain, Lock } from "lucide-react";
 import { motion } from "framer-motion";
 import { Link as RouterLink } from "react-router-dom";
+
+interface Quiz {
+  id: string;
+  title: string;
+  module_id: string;
+}
 
 interface Module {
   id: string;
@@ -16,6 +21,7 @@ interface Module {
   sort_order: number;
   xp_reward: number;
   lessons: { id: string; title: string; sort_order: number }[];
+  quiz?: Quiz | null;
 }
 
 export default function CourseView() {
@@ -24,21 +30,21 @@ export default function CourseView() {
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
+  const [completedQuizzes, setCompletedQuizzes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetch = async () => {
       const [courseRes, modulesRes, progressRes] = await Promise.all([
         supabase.from("courses").select("*").eq("id", courseId).single(),
-        supabase.from("modules").select("*, lessons(id, title, sort_order)").eq("course_id", courseId).order("sort_order"),
+        supabase.from("modules").select("*, lessons(id, title, sort_order), quizzes(id, title, module_id)").eq("course_id", courseId).order("sort_order"),
         user
           ? supabase
               .from("user_progress")
-              .select("lesson_id")
+              .select("lesson_id, quiz_id")
               .eq("user_id", user.id)
               .eq("course_id", courseId!)
               .eq("completed", true)
-              .not("lesson_id", "is", null)
           : Promise.resolve({ data: [] }),
       ]);
 
@@ -48,11 +54,13 @@ export default function CourseView() {
           (modulesRes.data as any[]).map((m) => ({
             ...m,
             lessons: (m.lessons || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+            quiz: m.quizzes?.[0] || null,
           }))
         );
       }
       if (progressRes.data) {
         setCompletedLessons(new Set(progressRes.data.map((p: any) => p.lesson_id).filter(Boolean)));
+        setCompletedQuizzes(new Set(progressRes.data.map((p: any) => p.quiz_id).filter(Boolean)));
       }
       setLoading(false);
     };
@@ -100,7 +108,9 @@ export default function CourseView() {
       <div className="space-y-4">
         {modules.map((mod, mi) => {
           const modLessonsCompleted = mod.lessons.filter((l) => completedLessons.has(l.id)).length;
-          const modComplete = modLessonsCompleted === mod.lessons.length && mod.lessons.length > 0;
+          const allLessonsDone = modLessonsCompleted === mod.lessons.length && mod.lessons.length > 0;
+          const quizDone = mod.quiz ? completedQuizzes.has(mod.quiz.id) : false;
+          const modComplete = allLessonsDone && (!mod.quiz || quizDone);
 
           return (
             <motion.div
@@ -147,6 +157,36 @@ export default function CourseView() {
                         </RouterLink>
                       );
                     })}
+
+                    {/* Quiz node */}
+                    {mod.quiz && (
+                      <div className="pt-1">
+                        {allLessonsDone ? (
+                          <RouterLink
+                            to={`/app/courses/${courseId}/quiz/${mod.quiz.id}`}
+                            className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${
+                              quizDone ? "text-success" : "hover:bg-muted"
+                            }`}
+                          >
+                            {quizDone ? (
+                              <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+                            ) : (
+                              <Brain className="w-4 h-4 text-primary flex-shrink-0" />
+                            )}
+                            <span className={`text-sm font-medium ${quizDone ? "line-through text-muted-foreground" : "text-primary"}`}>
+                              {mod.quiz.title}
+                            </span>
+                          </RouterLink>
+                        ) : (
+                          <div className="flex items-center gap-3 p-2 rounded-lg opacity-50">
+                            <Lock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                            <span className="text-sm text-muted-foreground">
+                              {mod.quiz.title} (completa las lecciones)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>

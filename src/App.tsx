@@ -17,6 +17,7 @@ import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
 import CreateCourse from "./pages/admin/CreateCourse";
 import EditCourse from "./pages/admin/EditCourse";
+import QuizView from "./pages/QuizView";
 import { AppLayout } from "./components/AppLayout";
 import NotFound from "./pages/NotFound";
 
@@ -41,6 +42,7 @@ const App = () => (
               <Route path="courses" element={<Courses />} />
               <Route path="courses/:courseId" element={<CourseView />} />
               <Route path="courses/:courseId/lessons/:lessonId" element={<LessonView />} />
+              <Route path="courses/:courseId/quiz/:quizId" element={<QuizView />} />
               <Route path="leaderboard" element={<Leaderboard />} />
               <Route path="profile" element={<Profile />} />
               

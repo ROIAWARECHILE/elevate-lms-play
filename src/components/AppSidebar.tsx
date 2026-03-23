@@ -20,18 +20,19 @@ import {
 import { Button } from "@/components/ui/button";
 
 const collaboratorItems = [
-  { title: "Dashboard", url: "/app", icon: LayoutDashboard },
-  { title: "Mis Cursos", url: "/app/courses", icon: BookOpen },
-  { title: "Ranking", url: "/app/leaderboard", icon: Trophy },
-  { title: "Perfil", url: "/app/profile", icon: User },
+  { title: "Dashboard", url: "/app", icon: LayoutDashboard, walkthrough: "nav-dashboard" },
+  { title: "Mis Cursos", url: "/app/courses", icon: BookOpen, walkthrough: "nav-courses" },
+  { title: "Ranking", url: "/app/leaderboard", icon: Trophy, walkthrough: "nav-leaderboard" },
+  { title: "Perfil", url: "/app/profile", icon: User, walkthrough: "nav-profile" },
 ];
 
 const adminItems = [
-  { title: "Dashboard", url: "/app", icon: LayoutDashboard },
-  { title: "Gestionar Cursos", url: "/app/admin/courses", icon: BookOpen },
-  { title: "Crear Curso", url: "/app/admin/courses/new", icon: PlusCircle },
+  { title: "Dashboard", url: "/app", icon: LayoutDashboard, walkthrough: "nav-dashboard" },
+  { title: "Gestionar Cursos", url: "/app/admin/courses", icon: BookOpen, walkthrough: "nav-admin-courses" },
+  { title: "Crear Curso", url: "/app/admin/courses/new", icon: PlusCircle, walkthrough: "nav-create-course" },
   { title: "Usuarios", url: "/app/admin/users", icon: Users },
   { title: "Analytics", url: "/app/admin/analytics", icon: BarChart3 },
+  { title: "Ranking", url: "/app/leaderboard", icon: Trophy, walkthrough: "nav-leaderboard" },
   { title: "Configuración", url: "/app/admin/settings", icon: Settings },
 ];
 
@@ -93,6 +94,7 @@ export function AppSidebar() {
                       end={item.url === "/app"}
                       className="hover:bg-sidebar-accent/50 text-sidebar-foreground/70"
                       activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
+                      {...(item.walkthrough ? { "data-walkthrough": item.walkthrough } : {})}
                     >
                       <item.icon className="mr-2 h-4 w-4" />
                       {!collapsed && <span>{item.title}</span>}
