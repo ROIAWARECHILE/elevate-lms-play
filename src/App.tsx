@@ -17,6 +17,7 @@ import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
 import CreateCourse from "./pages/admin/CreateCourse";
 import EditCourse from "./pages/admin/EditCourse";
+import QuizView from "./pages/QuizView";
 import { AppLayout } from "./components/AppLayout";
 import NotFound from "./pages/NotFound";
 
