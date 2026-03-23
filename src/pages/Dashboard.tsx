@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { BookOpen, Trophy, Flame, Zap, Target, TrendingUp, Users, Award } from "lucide-react";
 import { motion } from "framer-motion";
+import { WalkthroughOverlay } from "@/components/WalkthroughOverlay";
 
 const fadeIn = {
   initial: { opacity: 0, y: 12 },
@@ -11,8 +12,7 @@ const fadeIn = {
 
 function CollaboratorDashboard({ profile }: { profile: any }) {
   return (
-    <div className="space-y-6">
-      {/* Welcome */}
+    <div className="space-y-6" data-walkthrough="dashboard">
       <div>
         <h1 className="text-2xl font-bold">
           ¡Hola, {profile?.full_name?.split(" ")[0] || "Colaborador"}! 👋
@@ -20,8 +20,7 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
         <p className="text-muted-foreground">Continúa tu aprendizaje donde lo dejaste.</p>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" data-walkthrough="stats">
         {[
           { label: "XP Total", value: profile?.xp_total || 0, icon: Zap, color: "text-xp", bg: "bg-xp/10" },
           { label: "Racha", value: `${profile?.current_streak || 0} días`, icon: Flame, color: "text-streak", bg: "bg-streak/10" },
@@ -46,7 +45,6 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
         ))}
       </div>
 
-      {/* Active Courses */}
       <motion.div {...fadeIn} transition={{ delay: 0.4 }}>
         <Card className="shadow-card">
           <CardHeader>
@@ -65,9 +63,8 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
         </Card>
       </motion.div>
 
-      {/* Daily goal */}
       <motion.div {...fadeIn} transition={{ delay: 0.5 }}>
-        <Card className="shadow-card gradient-card">
+        <Card className="shadow-card gradient-card" data-walkthrough="daily-goal">
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold flex items-center gap-2">
@@ -89,7 +86,7 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
 
 function AdminDashboard({ profile }: { profile: any }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-walkthrough="dashboard">
       <div>
         <h1 className="text-2xl font-bold">Panel de administración</h1>
         <p className="text-muted-foreground">Vista general de tu workspace Kibbo.</p>
@@ -121,7 +118,7 @@ function AdminDashboard({ profile }: { profile: any }) {
       </div>
 
       <motion.div {...fadeIn} transition={{ delay: 0.4 }}>
-        <Card className="shadow-card">
+        <Card className="shadow-card" data-walkthrough="admin-steps">
           <CardHeader>
             <CardTitle className="text-lg">Primeros pasos</CardTitle>
           </CardHeader>
@@ -151,7 +148,12 @@ function AdminDashboard({ profile }: { profile: any }) {
 export default function Dashboard() {
   const { profile, isAdmin } = useAuth();
   
-  return isAdmin
-    ? <AdminDashboard profile={profile} />
-    : <CollaboratorDashboard profile={profile} />;
+  return (
+    <>
+      <WalkthroughOverlay isAdmin={isAdmin} />
+      {isAdmin
+        ? <AdminDashboard profile={profile} />
+        : <CollaboratorDashboard profile={profile} />}
+    </>
+  );
 }
