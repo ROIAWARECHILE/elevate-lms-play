@@ -94,6 +94,7 @@ export function AppSidebar() {
                       end={item.url === "/app"}
                       className="hover:bg-sidebar-accent/50 text-sidebar-foreground/70"
                       activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
+                      {...(item.walkthrough ? { "data-walkthrough": item.walkthrough } : {})}
                     >
                       <item.icon className="mr-2 h-4 w-4" />
                       {!collapsed && <span>{item.title}</span>}
