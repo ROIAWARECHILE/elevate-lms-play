@@ -1,94 +1,100 @@
 
 
-# Kibbo — MVP: Sistema de Aprendizaje Corporativo Gamificado
+# Plan: Quizzes Interactivos + Curso Demo IA + Walkthrough Duolingo
 
-## Visión General
-Plataforma de capacitación corporativa inspirada en Duolingo, con estilo SaaS premium (morado + gradientes). MVP enfocado en el flujo core: autenticación, creación de cursos, experiencia de aprendizaje y progreso.
+## 1. Quiz Interactivo para Colaboradores
 
----
+**Nueva página `QuizView.tsx`** — experiencia estilo Duolingo:
+- Barra de progreso arriba (pregunta X de N)
+- Una pregunta a la vez con animación de transición
+- Opción múltiple: cards seleccionables con feedback visual (verde correcto, rojo incorrecto)
+- Verdadero/Falso: dos botones grandes estilizados
+- Al responder: feedback inmediato con animación (confetti/shake), breve explicación
+- Al terminar: pantalla de resultados con score, XP ganados, opción de reintentar
+- Guarda progreso en `user_progress` con `quiz_id` y `score`
+- Otorga XP (+25) si aprueba (score >= passing_score)
+- Ruta: `/app/courses/:courseId/quiz/:quizId`
 
-## 1. Identidad Visual & Design System
-- Paleta: morado profundo como primario, gradientes modernos (morado → azul), fondos claros, acentos vibrantes para gamificación (verde éxito, amarillo XP)
-- Tipografía limpia tipo Inter/Plus Jakarta Sans
-- Cards redondeadas, sombras suaves, iconografía Lucide
-- Estilo inspirado en Linear + Notion + Duolingo
+## 2. Admin: Editor de Quizzes en EditCourse
 
-## 2. Landing Page Pública
-- Hero con propuesta de valor: "Capacita a tu equipo como un juego"
-- Secciones: Features, Cómo funciona, CTA de registro
-- Diseño moderno con gradientes morado
+**Ampliar `EditCourse.tsx`** para que cada módulo tenga:
+- Sección "Quiz del módulo" con botón para crear/editar quiz
+- Editor inline de preguntas:
+  - Tipo: opción múltiple o verdadero/falso
+  - Texto de la pregunta
+  - Opciones (2-4 para múltiple, V/F automático)
+  - Marcar respuesta correcta
+  - Agregar/eliminar preguntas con drag
+- Config del quiz: nota mínima, intentos máximos, XP reward
 
-## 3. Autenticación y Onboarding
-- Registro/Login por correo (Supabase Auth)
-- 2 roles: **Admin** y **Colaborador**
-- Flujo de onboarding: crear empresa (nombre, logo), invitar colaboradores
-- Dashboard diferenciado según rol
+## 3. CourseView: Integrar Quizzes en el Path
 
-## 4. Base de Datos (Supabase)
-Entidades principales:
-- **companies** — empresa/tenant
-- **profiles** — usuarios con referencia a company
-- **user_roles** — roles (admin, collaborator)
-- **courses** — cursos con título, descripción, nivel, duración, imagen
-- **modules** — módulos dentro de un curso (ordenados)
-- **lessons** — lecciones dentro de un módulo (texto, video, contenido)
-- **quizzes** — evaluaciones por módulo
-- **questions** — preguntas (múltiple opción, V/F)
-- **user_progress** — progreso por lección/módulo/curso
-- **user_xp** — puntos XP y streak
-- RLS por company_id para aislamiento multi-tenant
+**Modificar `CourseView.tsx`**:
+- Después de las lecciones de cada módulo, mostrar enlace al quiz si existe
+- Icono diferenciado (brain/clipboard) con estado (completado/pendiente/bloqueado)
+- Quiz se desbloquea solo cuando todas las lecciones del módulo están completadas
 
-## 5. Panel Admin — Creación de Cursos
-- Listado de cursos con estado (borrador/publicado)
-- Crear/editar curso: título, descripción, nivel, imagen, duración
-- Agregar módulos ordenables (drag & drop)
-- Dentro de cada módulo: agregar lecciones con contenido (texto rico, video embed, imágenes)
-- Agregar quiz al módulo: preguntas de opción múltiple y verdadero/falso
-- Publicar/despublicar curso
-- Asignar curso a todos los colaboradores
+## 4. Curso Demo: "Introducción a la IA"
 
-## 6. Experiencia del Colaborador
-- **Dashboard**: progreso general, cursos asignados, XP actual, streak, cursos en progreso
-- **Catálogo de cursos**: cards visuales con filtro por nivel
-- **Vista de curso**: módulos con progreso visual (estilo Duolingo path)
-- **Vista de lección**: contenido paso a paso, botón "Completar"
-- **Quiz interactivo**: preguntas una por una, feedback inmediato, resultado final
-- **Progreso**: barra de avance por módulo y curso
+**Insertar datos seed via SQL** — un curso completo con 3 módulos:
 
-## 7. Gamificación Básica
-- XP por lección completada (+10 XP) y quiz aprobado (+25 XP)
-- Streak diario (días consecutivos de aprendizaje)
-- Barra de nivel del usuario
-- Ranking simple entre colaboradores de la misma empresa
+- **Módulo 1: ¿Qué es la Inteligencia Artificial?**
+  - Lección 1: Definición y tipos de IA
+  - Lección 2: Historia breve de la IA
+  - Quiz: 4 preguntas (mix múltiple opción + V/F)
 
-## 8. Perfil del Usuario
-- Nombre, avatar, empresa
-- XP total, nivel, streak actual
-- Cursos completados y en progreso
-- Historial de quizzes
+- **Módulo 2: IA en el mundo real**
+  - Lección 1: IA en empresas
+  - Lección 2: ChatGPT y modelos de lenguaje
+  - Quiz: 4 preguntas
 
-## 9. Navegación
-- Sidebar moderna con iconos (estilo Linear)
-- Admin: Dashboard, Cursos, Usuarios, Configuración
-- Colaborador: Dashboard, Mis Cursos, Ranking, Perfil
-- Responsive: sidebar colapsable, experiencia mobile optimizada
+- **Módulo 3: Primeros pasos con IA**
+  - Lección 1: Cómo escribir buenos prompts
+  - Lección 2: Herramientas de IA para el trabajo
+  - Quiz: 4 preguntas
 
----
+El curso se insertará como `status: 'published'` vinculado a la company del usuario admin logueado, usando un edge function o insert directo.
 
-## Pantallas a construir (15 vistas)
-1. Landing page pública
-2. Login / Registro
-3. Onboarding empresa (solo admin)
-4. Dashboard colaborador
-5. Dashboard admin
-6. Catálogo de cursos
-7. Vista detalle de curso (con path de módulos)
-8. Vista de lección
-9. Quiz interactivo
-10. Perfil del usuario
-11. Ranking / Leaderboard
-12. Panel de creación de cursos (admin)
-13. Editor de módulo/lección (admin)
-14. Editor de quiz (admin)
-15. Configuración de empresa (admin)
+## 5. Sistema de Walkthrough (Onboarding Guiado estilo Duolingo)
+
+**Nuevo componente `WalkthroughOverlay.tsx`**:
+- Overlay con spotlight/highlight sobre elementos de la UI
+- Steps secuenciales con tooltip animado apuntando al elemento actual
+- Mascota/personaje Kibbo (simple ilustración SVG) que "habla" en cada paso
+- Botones "Siguiente" / "Omitir"
+- Se activa la primera vez que el usuario entra al dashboard
+- Estado guardado en `localStorage` (key: `kibbo_walkthrough_completed`)
+
+**Pasos del walkthrough para Colaborador:**
+1. "¡Bienvenido a Kibbo!" — spotlight en el dashboard
+2. "Aquí ves tu progreso y XP" — spotlight en stats cards
+3. "Explora los cursos disponibles" — spotlight en sidebar "Cursos"
+4. "Completa lecciones para ganar XP" — spotlight en meta diaria
+5. "Compite con tu equipo" — spotlight en sidebar "Ranking"
+
+**Pasos del walkthrough para Admin:**
+1. "¡Bienvenido a Kibbo!" — spotlight en dashboard
+2. "Crea cursos para tu equipo" — spotlight en sidebar "Gestionar Cursos"
+3. "Agrega módulos, lecciones y quizzes"
+4. "Revisa el progreso de tu equipo"
+
+## Archivos a crear/modificar
+
+| Archivo | Accion |
+|---|---|
+| `src/pages/QuizView.tsx` | Crear — experiencia quiz interactivo |
+| `src/pages/admin/EditCourse.tsx` | Modificar — agregar editor de quizzes |
+| `src/pages/CourseView.tsx` | Modificar — mostrar quizzes en path |
+| `src/components/WalkthroughOverlay.tsx` | Crear — sistema de walkthrough |
+| `src/components/KibboMascot.tsx` | Crear — SVG mascota simple |
+| `src/App.tsx` | Modificar — agregar ruta quiz |
+| `src/pages/Dashboard.tsx` | Modificar — integrar walkthrough |
+| Migration SQL | Insertar curso demo de IA (seed data) |
+
+## Detalles Técnicos
+
+- No se necesitan cambios de schema (quizzes/questions tables ya existen con RLS)
+- El curso demo se inserta via migration con UUIDs fijos para poder referenciar módulos/quizzes/preguntas
+- El walkthrough usa `position: fixed` overlay con `z-index` alto, calcula posición de elementos via `getBoundingClientRect`
+- Animaciones con framer-motion para transiciones de preguntas y feedback
 
