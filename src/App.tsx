@@ -53,6 +53,9 @@ const App = () => (
               <Route path="admin/courses" element={<AdminCourses />} />
               <Route path="admin/courses/new" element={<CreateCourse />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />
+              <Route path="admin/users" element={<AdminUsers />} />
+              <Route path="admin/analytics" element={<AdminAnalytics />} />
+              <Route path="admin/settings" element={<AdminSettings />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />
