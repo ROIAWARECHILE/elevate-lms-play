@@ -5,7 +5,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, CheckCircle2, XCircle, Loader2, Zap, RotateCcw, Trophy } from "lucide-react";
+import { ArrowLeft, CheckCircle2, XCircle, Loader2, Zap, RotateCcw } from "lucide-react";
+import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { XpAnimation } from "@/components/XpAnimation";
@@ -195,12 +196,10 @@ export default function QuizView() {
         <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
           <Card className="shadow-card overflow-hidden">
-            <div className={`p-8 text-center ${passed ? "gradient-primary" : "bg-destructive"} text-primary-foreground`}>
-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", delay: 0.2, stiffness: 200 }}>
-                {passed ? <Trophy className="w-16 h-16 mx-auto mb-4" /> : <XCircle className="w-16 h-16 mx-auto mb-4" />}
-              </motion.div>
-              <h2 className="text-2xl font-bold mb-1">{passed ? "¡Felicidades!" : "¡Sigue practicando!"}</h2>
-              <p className="text-primary-foreground/80">{passed ? "Has aprobado el quiz" : "No alcanzaste la nota mínima"}</p>
+            <div className={`p-8 text-center ${passed ? "gradient-primary" : "bg-destructive/10"}`}>
+              <KibboExpression expression={passed ? "celebrating" : "sad"} className="w-24 h-24 mx-auto mb-4" />
+              <h2 className={`text-2xl font-bold mb-1 ${passed ? "text-primary-foreground" : "text-destructive"}`}>{passed ? "¡Felicidades!" : "¡Sigue practicando!"}</h2>
+              <p className={passed ? "text-primary-foreground/80" : "text-muted-foreground"}>{passed ? "Has aprobado el quiz" : "No alcanzaste la nota mínima"}</p>
             </div>
             <CardContent className="p-6 space-y-4">
               <div className="grid grid-cols-3 gap-4 text-center">

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import kibboMascot from "@/assets/kibbo-mascot.png";
+import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Auth() {
@@ -79,7 +79,7 @@ export default function Auth() {
         <Card className="shadow-elevated border-border">
           <CardHeader className="text-center pb-4">
             <div className="flex justify-center mb-4">
-              <img src={kibboMascot} alt="Kibbo" className="w-16 h-16 rounded-2xl object-cover shadow-primary" />
+              <KibboExpression expression="excited" className="w-20 h-20" />
             </div>
             <CardTitle className="text-2xl font-bold">
               {isRegister ? "Crear cuenta" : "Bienvenido de vuelta"}

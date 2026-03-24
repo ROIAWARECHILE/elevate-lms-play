@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Zap, Loader2, Building2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Onboarding() {
@@ -66,9 +67,7 @@ export default function Onboarding() {
       <Card className="w-full max-w-md shadow-elevated relative z-10">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <div className="w-14 h-14 rounded-2xl gradient-primary flex items-center justify-center shadow-primary animate-pulse-glow">
-              <Building2 className="w-8 h-8 text-primary-foreground" />
-            </div>
+            <KibboExpression expression="excited" className="w-20 h-20" />
           </div>
           <CardTitle className="text-2xl">Crea tu workspace</CardTitle>
           <CardDescription>

@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Trophy, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { KibboExpression } from "./KibboExpression";
 
 interface LevelUpModalProps {
   show: boolean;
@@ -25,14 +26,7 @@ export function LevelUpModal({ show, level, onClose }: LevelUpModalProps) {
             exit={{ scale: 0.8, opacity: 0 }}
             transition={{ type: "spring", stiffness: 200, damping: 20 }}
           >
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring", delay: 0.2, stiffness: 300 }}
-              className="w-24 h-24 rounded-full gradient-primary flex items-center justify-center mx-auto mb-4 shadow-primary"
-            >
-              <Trophy className="w-12 h-12 text-primary-foreground" />
-            </motion.div>
+            <KibboExpression expression="surprised" className="w-28 h-28 mx-auto mb-4" />
 
             <motion.div
               initial={{ opacity: 0, y: 10 }}
