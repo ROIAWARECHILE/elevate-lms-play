@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { KibboMascot } from "./KibboMascot";
+import { KibboExpression } from "./KibboExpression";
 import { X } from "lucide-react";
 
 interface Step {
