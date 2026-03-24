@@ -90,7 +90,7 @@ export default function AdminUsers() {
 
   const copyInviteLink = () => {
     if (!company) return;
-    const link = `${window.location.origin}/join/${company.slug}`;
+    const link = `${APP_URL}/join/${company.slug}`;
     navigator.clipboard.writeText(link);
     toast({ title: "Enlace copiado", description: "Comparte este enlace con tu equipo" });
   };
