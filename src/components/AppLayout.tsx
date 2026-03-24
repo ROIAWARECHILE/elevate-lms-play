@@ -5,10 +5,12 @@ import { BottomTabBar } from "@/components/BottomTabBar";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 export function AppLayout() {
   const { user, profile, loading } = useAuth();
   const isMobile = useIsMobile();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -22,7 +24,6 @@ export function AppLayout() {
     return <Navigate to="/auth" replace />;
   }
 
-  // Redirect users without a company to onboarding
   if (!loading && profile && !profile.company_id) {
     return <Navigate to="/onboarding" replace />;
   }
@@ -38,7 +39,17 @@ export function AppLayout() {
             </header>
           )}
           <main className={`flex-1 p-4 md:p-6 ${isMobile ? "pb-20" : ""}`}>
-            <Outlet />
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2, ease: "easeInOut" }}
+              >
+                <Outlet />
+              </motion.div>
+            </AnimatePresence>
           </main>
         </div>
         {isMobile && <BottomTabBar />}

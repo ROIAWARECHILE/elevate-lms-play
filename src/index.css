@@ -141,4 +141,25 @@
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+  .active-ring {
+    position: relative;
+  }
+  .active-ring::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    border-top-color: hsl(var(--primary));
+    border-right-color: hsl(var(--primary) / 0.3);
+    animation: spin-ring 1.5s linear infinite;
+  }
+  .transition-smooth {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@keyframes spin-ring {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

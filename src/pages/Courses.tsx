@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { BookOpen, Clock, BarChart, Target } from "lucide-react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
+import { CourseCardSkeleton } from "@/components/SkeletonLoaders";
 
 interface Course {
   id: string;
@@ -49,15 +50,15 @@ export default function Courses() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-bold">Catálogo de cursos</h1>
         <p className="text-muted-foreground">Explora los cursos disponibles para ti.</p>
-      </div>
+      </motion.div>
 
       {loading ? (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
-            <Card key={i} className="h-48 animate-pulse bg-muted" />
+            <CourseCardSkeleton key={i} />
           ))}
         </div>
       ) : courses.length === 0 ? (
@@ -75,14 +76,16 @@ export default function Courses() {
           {courses.map((course, i) => (
             <motion.div
               key={course.id}
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: i * 0.06, type: "spring", stiffness: 300, damping: 25 }}
+              whileHover={{ y: -4, scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
             >
               <Link to={`/app/courses/${course.id}`}>
-                <Card className="shadow-card hover:shadow-elevated transition-all duration-300 cursor-pointer group overflow-hidden">
+                <Card className="shadow-card hover:shadow-elevated transition-shadow duration-300 cursor-pointer group overflow-hidden">
                   <div className="h-32 gradient-primary opacity-80 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <BookOpen className="w-12 h-12 text-primary-foreground/50" />
+                    <BookOpen className="w-12 h-12 text-primary-foreground/50 group-hover:scale-110 transition-transform duration-300" />
                   </div>
                   <CardContent className="p-4">
                     <div className="flex items-center gap-2 mb-2">

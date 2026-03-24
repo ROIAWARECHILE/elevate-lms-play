@@ -9,7 +9,9 @@ import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { XpAnimation } from "@/components/XpAnimation";
 import { LevelUpModal } from "@/components/LevelUpModal";
+import { ConfettiEffect } from "@/components/ConfettiEffect";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
+import { LessonSkeleton } from "@/components/SkeletonLoaders";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -22,6 +24,7 @@ export default function LessonView() {
   const [loading, setLoading] = useState(true);
   const [showXp, setShowXp] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
   const [newLevel, setNewLevel] = useState(1);
 
   useEffect(() => {
@@ -50,7 +53,6 @@ export default function LessonView() {
     setCompleting(true);
 
     try {
-      // Duplicate protection
       const isDuplicate = await checkDuplicateProgress(user.id, "lesson_id", lessonId!);
       if (isDuplicate) {
         setCompleted(true);
@@ -79,7 +81,6 @@ export default function LessonView() {
         source_id: lessonId!,
       });
 
-      // Update streak, level, XP
       const result = await updateStreakAndLevel({
         userId: user.id,
         companyId: profile.company_id!,
@@ -95,6 +96,7 @@ export default function LessonView() {
 
       setCompleted(true);
       setShowXp(true);
+      setShowConfetti(true);
 
       if (result.leveledUp) {
         setNewLevel(result.newLevel);
@@ -109,27 +111,24 @@ export default function LessonView() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  if (loading) return <LessonSkeleton />;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      <ConfettiEffect trigger={showConfetti} />
       <XpAnimation amount={lesson?.xp_reward || 10} show={showXp} onComplete={() => setShowXp(false)} />
       <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
 
-      <Link
-        to={`/app/courses/${courseId}`}
-        className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" /> Volver al curso
-      </Link>
+      <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
+        <Link
+          to={`/app/courses/${courseId}`}
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Volver al curso
+        </Link>
+      </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}>
         <Card className="shadow-card">
           <CardContent className="p-8">
             <div className="mb-6">
@@ -139,12 +138,20 @@ export default function LessonView() {
 
             <div className="prose prose-sm max-w-none mb-8">
               {lesson?.content?.blocks && Array.isArray(lesson.content.blocks) && lesson.content.blocks.length > 0 ? (
-                lesson.content.blocks.map((block: any, idx: number) => {
-                  if (block.type === "heading") {
-                    return <h3 key={idx} className="text-lg font-bold text-foreground mt-4 mb-2">{block.text}</h3>;
-                  }
-                  return <p key={idx} className="text-foreground leading-relaxed mb-3">{block.text}</p>;
-                })
+                lesson.content.blocks.map((block: any, idx: number) => (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 + idx * 0.05 }}
+                  >
+                    {block.type === "heading" ? (
+                      <h3 className="text-lg font-bold text-foreground mt-4 mb-2">{block.text}</h3>
+                    ) : (
+                      <p className="text-foreground leading-relaxed mb-3">{block.text}</p>
+                    )}
+                  </motion.div>
+                ))
               ) : lesson?.content?.text ? (
                 <div className="whitespace-pre-wrap text-foreground leading-relaxed">
                   {lesson.content.text}
@@ -157,26 +164,32 @@ export default function LessonView() {
             </div>
 
             {completed ? (
-              <div className="flex items-center gap-3 p-4 rounded-xl bg-success/10 text-success">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-3 p-4 rounded-xl bg-success/10 text-success"
+              >
                 <CheckCircle2 className="w-6 h-6" />
                 <div>
                   <p className="font-semibold">¡Lección completada!</p>
                   <p className="text-sm opacity-80">Has ganado {lesson?.xp_reward || 10} XP</p>
                 </div>
-              </div>
+              </motion.div>
             ) : (
-              <Button
-                onClick={completeLesson}
-                className="w-full gradient-primary shadow-primary h-12 text-base"
-                disabled={completing}
-              >
-                {completing ? (
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                ) : (
-                  <Zap className="w-5 h-5 mr-2" />
-                )}
-                Completar lección (+{lesson?.xp_reward || 10} XP)
-              </Button>
+              <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
+                <Button
+                  onClick={completeLesson}
+                  className="w-full gradient-primary shadow-primary h-12 text-base animate-pulse-glow"
+                  disabled={completing}
+                >
+                  {completing ? (
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  ) : (
+                    <Zap className="w-5 h-5 mr-2" />
+                  )}
+                  Completar lección (+{lesson?.xp_reward || 10} XP)
+                </Button>
+              </motion.div>
             )}
           </CardContent>
         </Card>
