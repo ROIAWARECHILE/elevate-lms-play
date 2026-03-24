@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, BookOpen, CheckCircle2, Clock, Zap, Brain, Lock } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, Clock, Zap, Brain, Lock, Crown } from "lucide-react";
 import { motion } from "framer-motion";
 import { Link as RouterLink } from "react-router-dom";
 
@@ -39,15 +38,9 @@ export default function CourseView() {
         supabase.from("courses").select("*").eq("id", courseId).single(),
         supabase.from("modules").select("*, lessons(id, title, sort_order), quizzes(id, title, module_id)").eq("course_id", courseId).order("sort_order"),
         user
-          ? supabase
-              .from("user_progress")
-              .select("lesson_id, quiz_id")
-              .eq("user_id", user.id)
-              .eq("course_id", courseId!)
-              .eq("completed", true)
+          ? supabase.from("user_progress").select("lesson_id, quiz_id").eq("user_id", user.id).eq("course_id", courseId!).eq("completed", true)
           : Promise.resolve({ data: [] }),
       ]);
-
       if (courseRes.data) setCourse(courseRes.data);
       if (modulesRes.data) {
         setModules(
@@ -72,8 +65,53 @@ export default function CourseView() {
   const totalLessons = modules.reduce((sum, m) => sum + m.lessons.length, 0);
   const progressPct = totalLessons > 0 ? (completedLessons.size / totalLessons) * 100 : 0;
 
+  // Build flat list of all nodes for path
+  type PathNode = {
+    type: "lesson" | "quiz" | "module-end";
+    id: string;
+    title: string;
+    moduleTitle: string;
+    moduleIndex: number;
+    done: boolean;
+    locked: boolean;
+    link?: string;
+  };
+
+  const pathNodes: PathNode[] = [];
+  modules.forEach((mod, mi) => {
+    const allLessonsDone = mod.lessons.length > 0 && mod.lessons.every((l) => completedLessons.has(l.id));
+    mod.lessons.forEach((lesson) => {
+      pathNodes.push({
+        type: "lesson",
+        id: lesson.id,
+        title: lesson.title,
+        moduleTitle: mod.title,
+        moduleIndex: mi,
+        done: completedLessons.has(lesson.id),
+        locked: false,
+        link: `/app/courses/${courseId}/lessons/${lesson.id}`,
+      });
+    });
+    if (mod.quiz) {
+      const quizDone = completedQuizzes.has(mod.quiz.id);
+      pathNodes.push({
+        type: "quiz",
+        id: mod.quiz.id,
+        title: mod.quiz.title,
+        moduleTitle: mod.title,
+        moduleIndex: mi,
+        done: quizDone,
+        locked: !allLessonsDone,
+        link: allLessonsDone ? `/app/courses/${courseId}/quiz/${mod.quiz.id}` : undefined,
+      });
+    }
+  });
+
+  // Find current active node (first non-completed, non-locked)
+  const activeIndex = pathNodes.findIndex((n) => !n.done && !n.locked);
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6">
       <Link
         to="/app/courses"
         className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -82,12 +120,12 @@ export default function CourseView() {
       </Link>
 
       {/* Course Header */}
-      <div className="gradient-primary rounded-2xl p-8 text-primary-foreground">
+      <div className="gradient-primary rounded-2xl p-6 md:p-8 text-primary-foreground">
         <Badge variant="secondary" className="mb-3">
           {course?.level === "beginner" ? "Básico" : course?.level === "intermediate" ? "Intermedio" : "Avanzado"}
         </Badge>
-        <h1 className="text-3xl font-bold mb-2">{course?.title}</h1>
-        <p className="text-primary-foreground/80 mb-4">{course?.description}</p>
+        <h1 className="text-2xl md:text-3xl font-bold mb-2">{course?.title}</h1>
+        <p className="text-primary-foreground/80 mb-4 text-sm md:text-base">{course?.description}</p>
         <div className="flex items-center gap-4 text-sm text-primary-foreground/70">
           <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {course?.estimated_duration_minutes}min</span>
           <span className="flex items-center gap-1"><Zap className="w-4 h-4" /> {course?.xp_reward} XP</span>
@@ -104,95 +142,92 @@ export default function CourseView() {
         </div>
       </div>
 
-      {/* Modules Path */}
-      <div className="space-y-4">
-        {modules.map((mod, mi) => {
-          const modLessonsCompleted = mod.lessons.filter((l) => completedLessons.has(l.id)).length;
-          const allLessonsDone = modLessonsCompleted === mod.lessons.length && mod.lessons.length > 0;
-          const quizDone = mod.quiz ? completedQuizzes.has(mod.quiz.id) : false;
-          const modComplete = allLessonsDone && (!mod.quiz || quizDone);
+      {/* Visual Path — Duolingo style */}
+      <div className="relative py-4">
+        {/* Vertical connector line */}
+        <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-border -translate-x-1/2 z-0" />
 
-          return (
-            <motion.div
-              key={mod.id}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: mi * 0.1 }}
-            >
-              <Card className={`shadow-card ${modComplete ? "border-success" : ""}`}>
-                <CardContent className="p-5">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold ${
-                      modComplete ? "bg-success text-success-foreground" : "gradient-primary text-primary-foreground"
-                    }`}>
-                      {modComplete ? <CheckCircle2 className="w-5 h-5" /> : mi + 1}
+        <div className="relative z-10 space-y-0">
+          {pathNodes.map((node, i) => {
+            const isActive = i === activeIndex;
+            const isNewModule = i === 0 || node.moduleIndex !== pathNodes[i - 1].moduleIndex;
+            // Zigzag offset
+            const offset = i % 2 === 0 ? "-translate-x-8 md:-translate-x-12" : "translate-x-8 md:translate-x-12";
+
+            return (
+              <div key={`${node.type}-${node.id}`}>
+                {/* Module header */}
+                {isNewModule && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: i * 0.05 }}
+                    className="flex justify-center mb-3 mt-2"
+                  >
+                    <span className="bg-muted text-muted-foreground text-xs font-semibold px-4 py-1.5 rounded-full">
+                      {node.moduleTitle}
+                    </span>
+                  </motion.div>
+                )}
+
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.06 }}
+                  className={`flex justify-center py-2 ${offset}`}
+                >
+                  {node.locked ? (
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center border-4 border-border">
+                        <Lock className="w-5 h-5 text-muted-foreground" />
+                      </div>
+                      <span className="text-[10px] text-muted-foreground max-w-[100px] text-center truncate">{node.title}</span>
                     </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold">{mod.title}</h3>
-                      <p className="text-xs text-muted-foreground">
-                        {modLessonsCompleted}/{mod.lessons.length} lecciones · {mod.xp_reward} XP
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 ml-5 border-l-2 border-border pl-4">
-                    {mod.lessons.map((lesson) => {
-                      const done = completedLessons.has(lesson.id);
-                      return (
-                        <RouterLink
-                          key={lesson.id}
-                          to={`/app/courses/${courseId}/lessons/${lesson.id}`}
-                          className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${
-                            done ? "text-success" : "hover:bg-muted"
-                          }`}
-                        >
-                          {done ? (
-                            <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
-                          ) : (
-                            <BookOpen className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                          )}
-                          <span className={`text-sm ${done ? "line-through text-muted-foreground" : ""}`}>
-                            {lesson.title}
-                          </span>
-                        </RouterLink>
-                      );
-                    })}
-
-                    {/* Quiz node */}
-                    {mod.quiz && (
-                      <div className="pt-1">
-                        {allLessonsDone ? (
-                          <RouterLink
-                            to={`/app/courses/${courseId}/quiz/${mod.quiz.id}`}
-                            className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${
-                              quizDone ? "text-success" : "hover:bg-muted"
-                            }`}
-                          >
-                            {quizDone ? (
-                              <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
-                            ) : (
-                              <Brain className="w-4 h-4 text-primary flex-shrink-0" />
-                            )}
-                            <span className={`text-sm font-medium ${quizDone ? "line-through text-muted-foreground" : "text-primary"}`}>
-                              {mod.quiz.title}
-                            </span>
-                          </RouterLink>
+                  ) : (
+                    <RouterLink to={node.link!} className="flex flex-col items-center gap-1 group">
+                      <div
+                        className={`w-14 h-14 rounded-full flex items-center justify-center border-4 transition-all ${
+                          node.done
+                            ? "bg-success border-success/30"
+                            : isActive
+                            ? "gradient-primary border-primary/30 shadow-primary animate-pulse"
+                            : "bg-muted border-border group-hover:border-primary/40"
+                        }`}
+                      >
+                        {node.done ? (
+                          <CheckCircle2 className="w-6 h-6 text-success-foreground" />
+                        ) : node.type === "quiz" ? (
+                          <Brain className={`w-6 h-6 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
                         ) : (
-                          <div className="flex items-center gap-3 p-2 rounded-lg opacity-50">
-                            <Lock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                            <span className="text-sm text-muted-foreground">
-                              {mod.quiz.title} (completa las lecciones)
-                            </span>
-                          </div>
+                          <BookOpen className={`w-6 h-6 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
                         )}
                       </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                      <span className={`text-[10px] max-w-[100px] text-center truncate ${
+                        node.done ? "text-success font-medium" : isActive ? "text-primary font-semibold" : "text-muted-foreground"
+                      }`}>
+                        {node.title}
+                      </span>
+                    </RouterLink>
+                  )}
+                </motion.div>
+              </div>
+            );
+          })}
+
+          {/* Course completion crown */}
+          {progressPct === 100 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: "spring", delay: 0.5 }}
+              className="flex justify-center pt-4"
+            >
+              <div className="w-16 h-16 rounded-full bg-xp/20 flex items-center justify-center border-4 border-xp/30">
+                <Crown className="w-8 h-8 text-xp" />
+              </div>
             </motion.div>
-          );
-        })}
+          )}
+        </div>
       </div>
     </div>
   );

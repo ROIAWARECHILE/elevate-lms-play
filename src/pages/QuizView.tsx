@@ -8,6 +8,9 @@ import { Progress } from "@/components/ui/progress";
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, Zap, RotateCcw, Trophy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
+import { XpAnimation } from "@/components/XpAnimation";
+import { LevelUpModal } from "@/components/LevelUpModal";
+import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 
 interface Question {
   id: string;
@@ -33,6 +36,9 @@ export default function QuizView() {
   const [finished, setFinished] = useState(false);
   const [alreadyPassed, setAlreadyPassed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showXp, setShowXp] = useState(false);
+  const [showLevelUp, setShowLevelUp] = useState(false);
+  const [newLevel, setNewLevel] = useState(1);
 
   useEffect(() => {
     const fetch = async () => {
@@ -83,7 +89,6 @@ export default function QuizView() {
       setSelectedAnswer(null);
       setShowFeedback(false);
     } else {
-      // Calculate final correct count including the current (last) answer
       const finalCorrect = correctCount + (selectedAnswer === currentQuestion?.correct_answer ? 1 : 0);
       setCorrectCount(finalCorrect);
       setFinished(true);
@@ -92,7 +97,12 @@ export default function QuizView() {
   };
 
   const saveResult = async (finalCorrect: number) => {
-    if (!user || !profile || alreadyPassed) return;
+    if (!user || !profile) return;
+
+    // Duplicate protection
+    const isDuplicate = await checkDuplicateProgress(user.id, "quiz_id", quizId!);
+    if (isDuplicate) return;
+
     const score = Math.round((finalCorrect / questions.length) * 100);
     const passed = score >= (quiz?.passing_score || 70);
 
@@ -110,17 +120,34 @@ export default function QuizView() {
       });
 
       if (passed) {
+        const xpReward = quiz?.xp_reward || 25;
         await supabase.from("user_xp_log").insert({
           user_id: user.id,
           company_id: profile.company_id!,
-          xp_amount: quiz?.xp_reward || 25,
+          xp_amount: xpReward,
           source: "quiz",
           source_id: quizId!,
         });
-        await supabase
-          .from("profiles")
-          .update({ xp_total: (profile.xp_total || 0) + (quiz?.xp_reward || 25) })
-          .eq("id", user.id);
+
+        const result = await updateStreakAndLevel({
+          userId: user.id,
+          companyId: profile.company_id!,
+          xpEarned: xpReward,
+          currentProfile: {
+            xp_total: profile.xp_total || 0,
+            current_streak: profile.current_streak || 0,
+            longest_streak: profile.longest_streak || 0,
+            last_activity_date: (profile as any).last_activity_date,
+            level: profile.level || 1,
+          },
+        });
+
+        setShowXp(true);
+        if (result.leveledUp) {
+          setNewLevel(result.newLevel);
+          setTimeout(() => setShowLevelUp(true), 1200);
+        }
+
         await refreshProfile();
       }
     } catch (e) {
@@ -150,26 +177,16 @@ export default function QuizView() {
   if (finished) {
     return (
       <div className="max-w-lg mx-auto">
+        <XpAnimation amount={quiz?.xp_reward || 25} show={showXp} onComplete={() => setShowXp(false)} />
+        <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
           <Card className="shadow-card overflow-hidden">
             <div className={`p-8 text-center ${passed ? "gradient-primary" : "bg-destructive"} text-primary-foreground`}>
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", delay: 0.2 }}
-              >
-                {passed ? (
-                  <Trophy className="w-16 h-16 mx-auto mb-4" />
-                ) : (
-                  <XCircle className="w-16 h-16 mx-auto mb-4" />
-                )}
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", delay: 0.2 }}>
+                {passed ? <Trophy className="w-16 h-16 mx-auto mb-4" /> : <XCircle className="w-16 h-16 mx-auto mb-4" />}
               </motion.div>
-              <h2 className="text-2xl font-bold mb-1">
-                {passed ? "¡Felicidades!" : "¡Sigue practicando!"}
-              </h2>
-              <p className="text-primary-foreground/80">
-                {passed ? "Has aprobado el quiz" : "No alcanzaste la nota mínima"}
-              </p>
+              <h2 className="text-2xl font-bold mb-1">{passed ? "¡Felicidades!" : "¡Sigue practicando!"}</h2>
+              <p className="text-primary-foreground/80">{passed ? "Has aprobado el quiz" : "No alcanzaste la nota mínima"}</p>
             </div>
             <CardContent className="p-6 space-y-4">
               <div className="grid grid-cols-3 gap-4 text-center">
@@ -186,7 +203,6 @@ export default function QuizView() {
                   <p className="text-xs text-muted-foreground">XP</p>
                 </div>
               </div>
-
               <div className="flex gap-3">
                 {!passed && (
                   <Button variant="outline" className="flex-1" onClick={restart}>
@@ -204,42 +220,25 @@ export default function QuizView() {
     );
   }
 
-  const options =
-    currentQuestion?.question_type === "true_false"
-      ? ["Verdadero", "Falso"]
-      : currentQuestion?.options || [];
+  const options = currentQuestion?.question_type === "true_false" ? ["Verdadero", "Falso"] : currentQuestion?.options || [];
 
   return (
     <div className="max-w-lg mx-auto space-y-6">
       <div className="flex items-center gap-4">
-        <Link
-          to={`/app/courses/${courseId}`}
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
+        <Link to={`/app/courses/${courseId}`} className="text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="flex-1">
           <Progress value={progressPct} className="h-3" />
         </div>
-        <span className="text-sm font-medium text-muted-foreground">
-          {currentIndex + 1}/{questions.length}
-        </span>
+        <span className="text-sm font-medium text-muted-foreground">{currentIndex + 1}/{questions.length}</span>
       </div>
 
       <AnimatePresence mode="wait">
-        <motion.div
-          key={currentIndex}
-          initial={{ opacity: 0, x: 30 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: -30 }}
-          transition={{ duration: 0.25 }}
-        >
+        <motion.div key={currentIndex} initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.25 }}>
           <Card className="shadow-card">
             <CardContent className="p-6 space-y-6">
-              <h2 className="text-lg font-semibold leading-snug">
-                {currentQuestion?.question_text}
-              </h2>
-
+              <h2 className="text-lg font-semibold leading-snug">{currentQuestion?.question_text}</h2>
               <div className="space-y-3">
                 {options.map((option: string, idx: number) => {
                   let style = "border-border hover:border-primary/50 hover:bg-primary/5";
@@ -254,7 +253,6 @@ export default function QuizView() {
                   } else if (option === selectedAnswer) {
                     style = "border-primary bg-primary/10";
                   }
-
                   return (
                     <motion.button
                       key={idx}
@@ -268,34 +266,17 @@ export default function QuizView() {
                           {String.fromCharCode(65 + idx)}
                         </span>
                         {option}
-                        {showFeedback && option === currentQuestion.correct_answer && (
-                          <CheckCircle2 className="w-5 h-5 ml-auto text-success" />
-                        )}
-                        {showFeedback && option === selectedAnswer && !isCorrect && option !== currentQuestion.correct_answer && (
-                          <XCircle className="w-5 h-5 ml-auto text-destructive" />
-                        )}
+                        {showFeedback && option === currentQuestion.correct_answer && <CheckCircle2 className="w-5 h-5 ml-auto text-success" />}
+                        {showFeedback && option === selectedAnswer && !isCorrect && option !== currentQuestion.correct_answer && <XCircle className="w-5 h-5 ml-auto text-destructive" />}
                       </span>
                     </motion.button>
                   );
                 })}
               </div>
-
               {showFeedback && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className={`p-4 rounded-xl ${
-                    isCorrect ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"
-                  }`}
-                >
-                  <p className="font-semibold">
-                    {isCorrect ? "¡Correcto! 🎉" : "Incorrecto 😕"}
-                  </p>
-                  {!isCorrect && (
-                    <p className="text-sm mt-1 opacity-80">
-                      La respuesta correcta era: {currentQuestion.correct_answer}
-                    </p>
-                  )}
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`p-4 rounded-xl ${isCorrect ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
+                  <p className="font-semibold">{isCorrect ? "¡Correcto! 🎉" : "Incorrecto 😕"}</p>
+                  {!isCorrect && <p className="text-sm mt-1 opacity-80">La respuesta correcta era: {currentQuestion.correct_answer}</p>}
                 </motion.div>
               )}
             </CardContent>
