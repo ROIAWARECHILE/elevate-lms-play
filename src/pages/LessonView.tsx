@@ -4,9 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, ArrowRight, CheckCircle2, Loader2, Zap } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
+import { XpAnimation } from "@/components/XpAnimation";
+import { LevelUpModal } from "@/components/LevelUpModal";
+import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -17,6 +20,9 @@ export default function LessonView() {
   const [completed, setCompleted] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showXp, setShowXp] = useState(false);
+  const [showLevelUp, setShowLevelUp] = useState(false);
+  const [newLevel, setNewLevel] = useState(1);
 
   useEffect(() => {
     const fetch = async () => {
@@ -44,7 +50,16 @@ export default function LessonView() {
     setCompleting(true);
 
     try {
-      // Insert progress
+      // Duplicate protection
+      const isDuplicate = await checkDuplicateProgress(user.id, "lesson_id", lessonId!);
+      if (isDuplicate) {
+        setCompleted(true);
+        setCompleting(false);
+        return;
+      }
+
+      const xpReward = lesson.xp_reward || 10;
+
       await supabase.from("user_progress").insert({
         user_id: user.id,
         company_id: profile.company_id!,
@@ -52,31 +67,41 @@ export default function LessonView() {
         module_id: lesson.module_id,
         lesson_id: lessonId!,
         completed: true,
-        xp_earned: lesson.xp_reward || 10,
+        xp_earned: xpReward,
         completed_at: new Date().toISOString(),
       });
 
-      // Log XP
       await supabase.from("user_xp_log").insert({
         user_id: user.id,
         company_id: profile.company_id!,
-        xp_amount: lesson.xp_reward || 10,
+        xp_amount: xpReward,
         source: "lesson",
         source_id: lessonId!,
       });
 
-      // Update profile XP
-      await supabase
-        .from("profiles")
-        .update({ xp_total: (profile.xp_total || 0) + (lesson.xp_reward || 10) })
-        .eq("id", user.id);
+      // Update streak, level, XP
+      const result = await updateStreakAndLevel({
+        userId: user.id,
+        companyId: profile.company_id!,
+        xpEarned: xpReward,
+        currentProfile: {
+          xp_total: profile.xp_total || 0,
+          current_streak: profile.current_streak || 0,
+          longest_streak: profile.longest_streak || 0,
+          last_activity_date: (profile as any).last_activity_date,
+          level: profile.level || 1,
+        },
+      });
 
       setCompleted(true);
+      setShowXp(true);
+
+      if (result.leveledUp) {
+        setNewLevel(result.newLevel);
+        setTimeout(() => setShowLevelUp(true), 1200);
+      }
+
       await refreshProfile();
-      toast({
-        title: `+${lesson.xp_reward || 10} XP ⚡`,
-        description: "¡Lección completada!",
-      });
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -94,6 +119,9 @@ export default function LessonView() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      <XpAnimation amount={lesson?.xp_reward || 10} show={showXp} onComplete={() => setShowXp(false)} />
+      <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
+
       <Link
         to={`/app/courses/${courseId}`}
         className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -109,7 +137,6 @@ export default function LessonView() {
               <h1 className="text-2xl font-bold">{lesson?.title}</h1>
             </div>
 
-            {/* Lesson Content */}
             <div className="prose prose-sm max-w-none mb-8">
               {lesson?.content?.text ? (
                 <div className="whitespace-pre-wrap text-foreground leading-relaxed">
@@ -122,7 +149,6 @@ export default function LessonView() {
               )}
             </div>
 
-            {/* Complete Button */}
             {completed ? (
               <div className="flex items-center gap-3 p-4 rounded-xl bg-success/10 text-success">
                 <CheckCircle2 className="w-6 h-6" />
