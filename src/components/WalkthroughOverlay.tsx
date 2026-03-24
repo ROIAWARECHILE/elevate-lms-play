@@ -127,7 +127,7 @@ export function WalkthroughOverlay({ isAdmin }: { isAdmin: boolean }) {
         >
           <div className="bg-card rounded-2xl shadow-xl p-5 border">
             <div className="flex items-start gap-3">
-              <KibboMascot className="w-14 h-14 flex-shrink-0" />
+              <KibboExpression expression="excited" className="w-14 h-14 flex-shrink-0" />
               <div className="flex-1">
                 <h3 className="font-bold text-base">{step?.title}</h3>
                 <p className="text-sm text-muted-foreground mt-1">{step?.description}</p>

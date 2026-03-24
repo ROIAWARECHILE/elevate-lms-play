@@ -179,9 +179,19 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
 
   return (
     <div className="space-y-6" data-walkthrough="dashboard">
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-bold">¡Hola, {profile?.full_name?.split(" ")[0] || "Colaborador"}! 👋</h1>
-        <p className="text-muted-foreground">Continúa tu aprendizaje donde lo dejaste.</p>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-4">
+        <KibboExpression
+          expression={(profile?.current_streak || 0) > 0 ? "determined" : "sleeping"}
+          className="w-16 h-16 flex-shrink-0"
+        />
+        <div>
+          <h1 className="text-2xl font-bold">¡Hola, {profile?.full_name?.split(" ")[0] || "Colaborador"}!</h1>
+          <p className="text-muted-foreground">
+            {(profile?.current_streak || 0) > 0
+              ? `🔥 Racha de ${profile.current_streak} días — ¡sigue así!`
+              : "Completa una lección hoy para iniciar tu racha."}
+          </p>
+        </div>
       </motion.div>
 
       {user && profile?.company_id && (
