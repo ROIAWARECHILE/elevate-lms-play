@@ -2,6 +2,7 @@ import {
   LayoutDashboard, BookOpen, Trophy, User, Settings,
   Users, BarChart3, PlusCircle, LogOut, Zap, Flame
 } from "lucide-react";
+import kibboLogo from "@/assets/kibbo-mascot.png";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
