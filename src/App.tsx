@@ -8,6 +8,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
 import Onboarding from "./pages/Onboarding";
+import JoinCompany from "./pages/JoinCompany";
 import Dashboard from "./pages/Dashboard";
 import Courses from "./pages/Courses";
 import CourseView from "./pages/CourseView";
