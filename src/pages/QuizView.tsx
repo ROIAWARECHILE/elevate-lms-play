@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,6 +10,8 @@ import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { XpAnimation } from "@/components/XpAnimation";
 import { LevelUpModal } from "@/components/LevelUpModal";
+import { ConfettiEffect } from "@/components/ConfettiEffect";
+import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 
 interface Question {
@@ -39,6 +41,9 @@ export default function QuizView() {
   const [showXp, setShowXp] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [newLevel, setNewLevel] = useState(1);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [shakeWrong, setShakeWrong] = useState(false);
+  const correctCountRef = useRef(0);
 
   useEffect(() => {
     const fetch = async () => {
@@ -74,9 +79,6 @@ export default function QuizView() {
   const isCorrect = selectedAnswer === currentQuestion?.correct_answer;
   const progressPct = questions.length > 0 ? ((currentIndex + (showFeedback ? 1 : 0)) / questions.length) * 100 : 0;
 
-  // Use ref to track correct count reliably across React state batching
-  const correctCountRef = { current: correctCount };
-
   const handleAnswer = (answer: string) => {
     if (showFeedback) return;
     setSelectedAnswer(answer);
@@ -85,6 +87,9 @@ export default function QuizView() {
       const newCount = correctCount + 1;
       setCorrectCount(newCount);
       correctCountRef.current = newCount;
+    } else {
+      setShakeWrong(true);
+      setTimeout(() => setShakeWrong(false), 500);
     }
   };
 
@@ -96,14 +101,16 @@ export default function QuizView() {
     } else {
       const finalCorrect = correctCountRef.current;
       setFinished(true);
+      const score = Math.round((finalCorrect / questions.length) * 100);
+      if (score >= (quiz?.passing_score || 70)) {
+        setShowConfetti(true);
+      }
       saveResult(finalCorrect);
     }
   };
 
   const saveResult = async (finalCorrect: number) => {
     if (!user || !profile) return;
-
-    // Duplicate protection
     const isDuplicate = await checkDuplicateProgress(user.id, "quiz_id", quizId!);
     if (isDuplicate) return;
 
@@ -164,7 +171,9 @@ export default function QuizView() {
     setSelectedAnswer(null);
     setShowFeedback(false);
     setCorrectCount(0);
+    correctCountRef.current = 0;
     setFinished(false);
+    setShowConfetti(false);
   };
 
   if (loading) {
@@ -181,12 +190,13 @@ export default function QuizView() {
   if (finished) {
     return (
       <div className="max-w-lg mx-auto">
+        <ConfettiEffect trigger={showConfetti} />
         <XpAnimation amount={quiz?.xp_reward || 25} show={showXp} onComplete={() => setShowXp(false)} />
         <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
           <Card className="shadow-card overflow-hidden">
             <div className={`p-8 text-center ${passed ? "gradient-primary" : "bg-destructive"} text-primary-foreground`}>
-              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", delay: 0.2 }}>
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", delay: 0.2, stiffness: 200 }}>
                 {passed ? <Trophy className="w-16 h-16 mx-auto mb-4" /> : <XCircle className="w-16 h-16 mx-auto mb-4" />}
               </motion.div>
               <h2 className="text-2xl font-bold mb-1">{passed ? "¡Felicidades!" : "¡Sigue practicando!"}</h2>
@@ -195,11 +205,13 @@ export default function QuizView() {
             <CardContent className="p-6 space-y-4">
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
-                  <p className="text-2xl font-bold">{finalScore}%</p>
+                  <AnimatedCounter value={finalScore} className="text-2xl font-bold" suffix="%" />
                   <p className="text-xs text-muted-foreground">Puntaje</p>
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{correctCount}/{questions.length}</p>
+                  <p className="text-2xl font-bold">
+                    <AnimatedCounter value={correctCount} />/{questions.length}
+                  </p>
                   <p className="text-xs text-muted-foreground">Correctas</p>
                 </div>
                 <div>
@@ -239,8 +251,14 @@ export default function QuizView() {
       </div>
 
       <AnimatePresence mode="wait">
-        <motion.div key={currentIndex} initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.25 }}>
-          <Card className="shadow-card">
+        <motion.div
+          key={currentIndex}
+          initial={{ opacity: 0, x: 30 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -30 }}
+          transition={{ duration: 0.25 }}
+        >
+          <Card className={`shadow-card ${shakeWrong ? "animate-shake" : ""}`}>
             <CardContent className="p-6 space-y-6">
               <h2 className="text-lg font-semibold leading-snug">{currentQuestion?.question_text}</h2>
               <div className="space-y-3">
@@ -263,7 +281,11 @@ export default function QuizView() {
                       onClick={() => handleAnswer(option)}
                       disabled={showFeedback}
                       className={`w-full text-left p-4 rounded-xl border-2 transition-all font-medium ${style}`}
-                      whileTap={!showFeedback ? { scale: 0.98 } : {}}
+                      whileTap={!showFeedback ? { scale: 0.97 } : {}}
+                      whileHover={!showFeedback ? { scale: 1.01 } : {}}
+                      {...(showFeedback && option === currentQuestion.correct_answer
+                        ? { animate: { scale: [1, 1.05, 1] }, transition: { duration: 0.3 } }
+                        : {})}
                     >
                       <span className="flex items-center gap-3">
                         <span className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center text-sm font-bold">
@@ -289,8 +311,8 @@ export default function QuizView() {
       </AnimatePresence>
 
       {showFeedback && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <Button onClick={handleNext} className="w-full gradient-primary h-12 text-base">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <Button onClick={handleNext} className="w-full gradient-primary h-12 text-base shadow-primary">
             {currentIndex < questions.length - 1 ? "Siguiente pregunta" : "Ver resultados"}
           </Button>
         </motion.div>

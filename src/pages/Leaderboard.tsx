@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Trophy, Flame, Zap, Medal } from "lucide-react";
 import { motion } from "framer-motion";
+import { LeaderboardRowSkeleton } from "@/components/SkeletonLoaders";
 
 interface LeaderboardUser {
   id: string;
@@ -17,6 +18,7 @@ interface LeaderboardUser {
 export default function Leaderboard() {
   const { user, profile } = useAuth();
   const [users, setUsers] = useState<LeaderboardUser[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetch = async () => {
@@ -28,6 +30,7 @@ export default function Leaderboard() {
         .order("xp_total", { ascending: false })
         .limit(50);
       if (data) setUsers(data as LeaderboardUser[]);
+      setLoading(false);
     };
     fetch();
   }, [profile?.company_id]);
@@ -36,16 +39,22 @@ export default function Leaderboard() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Trophy className="w-6 h-6 text-xp" /> Ranking
         </h1>
         <p className="text-muted-foreground">Los mejores aprendices de tu empresa.</p>
-      </div>
+      </motion.div>
 
       <Card className="shadow-card">
         <CardContent className="p-0">
-          {users.length === 0 ? (
+          {loading ? (
+            <div className="divide-y divide-border">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <LeaderboardRowSkeleton key={i} />
+              ))}
+            </div>
+          ) : users.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground">
               <Trophy className="w-12 h-12 mx-auto mb-3 opacity-30" />
               <p>El ranking aparecerá cuando haya actividad.</p>
@@ -55,16 +64,23 @@ export default function Leaderboard() {
               {users.map((u, i) => (
                 <motion.div
                   key={u.id}
-                  initial={{ opacity: 0, x: -10 }}
+                  initial={{ opacity: 0, x: -12 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.03 }}
-                  className={`flex items-center gap-4 p-4 ${
+                  transition={{ delay: i * 0.04, type: "spring", stiffness: 300, damping: 25 }}
+                  whileHover={{ backgroundColor: "hsl(var(--accent) / 0.3)" }}
+                  className={`flex items-center gap-4 p-4 transition-colors cursor-default ${
                     u.id === user?.id ? "bg-accent/50" : ""
                   }`}
                 >
                   <span className="w-8 text-center font-bold text-lg">
                     {i < 3 ? (
-                      <Medal className={`w-6 h-6 mx-auto ${medalColors[i]}`} />
+                      <motion.div
+                        initial={{ scale: 0, rotate: -180 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        transition={{ type: "spring", delay: i * 0.1 + 0.2 }}
+                      >
+                        <Medal className={`w-6 h-6 mx-auto ${medalColors[i]}`} />
+                      </motion.div>
                     ) : (
                       <span className="text-muted-foreground">{i + 1}</span>
                     )}
