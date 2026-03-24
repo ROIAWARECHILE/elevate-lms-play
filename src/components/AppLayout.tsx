@@ -7,7 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { Loader2 } from "lucide-react";
 
 export function AppLayout() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const isMobile = useIsMobile();
 
   if (loading) {
