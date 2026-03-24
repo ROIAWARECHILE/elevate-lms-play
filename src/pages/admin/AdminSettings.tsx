@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings, Loader2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { APP_URL } from "@/lib/constants";
 
 export default function AdminSettings() {
   const { profile } = useAuth();
@@ -82,7 +83,7 @@ export default function AdminSettings() {
               <Label htmlFor="slug">Slug (enlace de invitación)</Label>
               <Input id="slug" value={company?.slug || ""} disabled className="bg-muted" />
               <p className="text-xs text-muted-foreground">
-                Enlace: {window.location.origin}/join/{company?.slug}
+                Enlace: {APP_URL}/join/{company?.slug}
               </p>
             </div>
             <div className="space-y-2">

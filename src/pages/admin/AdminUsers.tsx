@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Users, Copy, CheckCircle2, Shield, User, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { APP_URL } from "@/lib/constants";
 
 interface CompanyUser {
   id: string;
@@ -89,7 +90,7 @@ export default function AdminUsers() {
 
   const copyInviteLink = () => {
     if (!company) return;
-    const link = `${window.location.origin}/join/${company.slug}`;
+    const link = `${APP_URL}/join/${company.slug}`;
     navigator.clipboard.writeText(link);
     toast({ title: "Enlace copiado", description: "Comparte este enlace con tu equipo" });
   };

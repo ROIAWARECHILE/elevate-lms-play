@@ -28,28 +28,12 @@ export default function Onboarding() {
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, "");
 
-      // Create company
-      const { data: company, error: companyError } = await supabase
-        .from("companies")
-        .insert({ name: companyName, slug })
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc("create_company_for_user", {
+        _name: companyName,
+        _slug: slug,
+      });
 
-      if (companyError) throw companyError;
-
-      // Update profile with company_id
-      const { error: profileError } = await supabase
-        .from("profiles")
-        .update({ company_id: company.id })
-        .eq("id", user.id);
-
-      if (profileError) throw profileError;
-
-      // Add admin role
-      await supabase.from("user_roles").upsert(
-        { user_id: user.id, role: "admin" as any },
-        { onConflict: "user_id,role" }
-      );
+      if (error) throw error;
 
       await refreshProfile();
       toast({ title: "¡Workspace creado!", description: `Bienvenido a ${companyName}` });
