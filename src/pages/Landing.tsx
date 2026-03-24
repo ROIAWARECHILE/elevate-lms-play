@@ -9,6 +9,7 @@ import {
 import { KibboMascot } from "@/components/KibboMascot";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { useRef } from "react";
+import kibboLogo from "@/assets/kibbo-mascot.png";
 
 /* ─── Data ─── */
 const features = [
