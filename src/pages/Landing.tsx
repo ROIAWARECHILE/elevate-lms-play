@@ -395,9 +395,7 @@ export default function Landing() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <div className="w-7 h-7 rounded-lg gradient-primary flex items-center justify-center">
-                  <Zap className="w-4 h-4 text-primary-foreground" />
-                </div>
+                <img src={kibboLogo} alt="Kibbo" className="w-7 h-7 rounded-lg object-cover" />
                 <span className="font-bold text-foreground">Kibbo</span>
               </div>
               <p className="text-xs text-muted-foreground">Capacitación corporativa que engancha.</p>

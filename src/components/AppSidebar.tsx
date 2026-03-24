@@ -48,9 +48,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r-0">
       <div className="p-4 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl gradient-primary flex items-center justify-center flex-shrink-0">
-          <Zap className="w-5 h-5 text-primary-foreground" />
-        </div>
+        <img src={kibboLogo} alt="Kibbo" className="w-9 h-9 rounded-xl object-cover flex-shrink-0" />
         {!collapsed && (
           <span className="text-lg font-bold text-sidebar-foreground">Kibbo</span>
         )}
