@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap } from "lucide-react";
+import kibboDancing from "@/assets/kibbo-dancing.png";
 
 interface XpAnimationProps {
   amount: number;
