@@ -1,63 +1,65 @@
 
 
-# Plan: Landing Page Rediseñada — Impactante y Comunicativa
+# Plan: Rebranding Visual Completo — Identidad Kibbo
 
-## Problemas Actuales
-- Hero demasiado generico y plano, no muestra el producto
-- No hay una seccion visual que enseñe como se ve la app (mockup/preview)
-- Los floating cards son pequeños y se pierden
-- No hay seccion "Como funciona" (paso a paso)
-- No hay testimonios ni social proof real
-- La mascota Kibbo (ya existe como componente) no aparece en la landing
-- El CTA final es muy basico
-- Falta seccion que diferencie Admin vs Colaborador
+## Cambios Principales
 
-## Rediseño Propuesto
+La identidad de marca proporcionada cambia fundamentalmente el look de la app:
+- **Paleta actual**: Morado (#7C3AED) como primario
+- **Paleta nueva**: Naranja Kibbo (#FF6B35), Cyan (#00D4FF), Navy (#1E3A5F), Peach (#FFD4B8)
+- **Mascota actual**: SVG generico (circulo con ojos)
+- **Mascota nueva**: Zorro naranja con headband cyan (imagen real proporcionada)
+- **Gradientes**: De morado-azul a naranja-cyan
 
-### 1. Hero Mejorado
-- Mascota Kibbo animada al lado del texto hero (usando `KibboMascot.tsx` existente)
-- Subtitulo mas concreto: "Crea cursos, lanza quizzes, mide resultados. Tu equipo sube de nivel mientras aprende."
-- Animated counter en el badge: "Usado por +500 equipos"
-- Background con patron de puntos/grid sutil en vez de gradient plano
+## Implementacion
 
-### 2. Nueva Seccion: App Preview / Mockup
-- Despues del hero, un browser mockup estilizado que muestra una captura simulada del dashboard/course path
-- Construido con divs/CSS (no imagen externa): simula cards de XP, un path de curso con nodos, una barra de progreso
-- Animacion: los elementos del mockup aparecen uno por uno con stagger
+### 1. Copiar imagen de mascota al proyecto
+Copiar `Zorro_saludando_fondo_blanco.jpg` a `src/assets/kibbo-mascot.png` para usarla como `<img>` en vez del SVG actual.
 
-### 3. Seccion "Como funciona" (3 pasos)
-- Paso 1: "Crea cursos" — icono + descripcion corta
-- Paso 2: "Tu equipo aprende jugando" — icono + descripcion
-- Paso 3: "Mide el impacto" — icono + descripcion
-- Layout horizontal con linea conectora entre los pasos
-- Numeros grandes animados (1, 2, 3)
+### 2. Actualizar paleta de colores (`src/index.css`)
+Reemplazar las CSS variables:
+- `--primary`: de morado a naranja (#FF6B35 → `21 100% 60%`)
+- `--accent`: cyan (#00D4FF → `192 100% 50%`)
+- Sidebar background: Navy (#1E3A5F → `210 52% 24%`)
+- `--gradient-primary`: de morado-azul a naranja-cyan
+- `--gradient-hero`: naranja a peach
+- Mantener `--success`, `--destructive`, `--xp`, `--streak` (ya alineados con naranja)
 
-### 4. Seccion "Para Admins y Colaboradores"
-- Dos columnas lado a lado mostrando las dos experiencias:
-  - Admin: "Crea cursos, gestiona equipos, revisa analytics"
-  - Colaborador: "Aprende con lecciones, gana XP, compite en el ranking"
-- Iconos y mini-features bullet list
+### 3. Actualizar `KibboMascot.tsx`
+Reemplazar el SVG generico por un componente que usa la imagen real del zorro. Mantener la animacion framer-motion de entrada.
 
-### 5. Features Mejoradas
-- Mantener las 6 features pero con hover effects mas pronunciados (gradient border on hover)
-- Agregar un icono animado (pulse) en el feature destacado
+### 4. Actualizar `Landing.tsx`
+- Usar imagen real del zorro en el hero y CTA
+- Ajustar textos del navbar logo (icono naranja en vez de morado)
+- Los floating cards y mockup se adaptaran automaticamente via CSS variables
 
-### 6. Stats con AnimatedCounter
-- Usar el componente `AnimatedCounter` existente para que los numeros se cuenten al entrar en viewport
+### 5. Actualizar `Auth.tsx`
+- Logo/icono usa el nuevo color primario (automatico via CSS variables)
+- Agregar imagen de mascota al lado del formulario
 
-### 7. CTA Final con Mascota
-- Kibbo mascota al lado del CTA final con un speech bubble: "¿Listo para empezar?"
-- Gradient mas vibrante
+### 6. Actualizar `AppSidebar.tsx`
+- Logo icon con nuevo color
+- Sidebar background se actualiza automaticamente via CSS variables
 
-### 8. Footer expandido
-- Links a secciones de la pagina (Features, Como funciona, etc)
-- Link a "Unirse a empresa" (`/join`)
+### 7. Actualizar `tailwind.config.ts`
+- Ajustar gradientes en keyframes si referencian colores hardcoded (verificar `pulse-glow`)
+
+### 8. Actualizar `BottomTabBar.tsx`
+- Los colores se adaptan automaticamente via `text-primary`
 
 ## Archivos a modificar
 
 | Archivo | Accion |
 |---|---|
-| `src/pages/Landing.tsx` | Reescribir completo con todas las nuevas secciones |
+| `src/assets/kibbo-mascot.png` | Crear — copiar imagen del zorro |
+| `src/index.css` | Modificar — nueva paleta de colores completa |
+| `src/components/KibboMascot.tsx` | Modificar — usar imagen real en vez de SVG |
+| `src/pages/Landing.tsx` | Modificar — integrar mascota real, ajustar navbar |
+| `src/pages/Auth.tsx` | Modificar — agregar mascota, nuevo icono |
+| `tailwind.config.ts` | Modificar — actualizar colores hardcoded en keyframes |
 
-Solo se modifica un archivo. Se reutilizan componentes existentes: `KibboMascot`, `AnimatedCounter`.
+## Notas
+- La mayoria de la app se actualiza automaticamente al cambiar las CSS variables (botones, cards, sidebar, progress bars, badges)
+- Los componentes que usan `gradient-primary`, `text-primary`, `bg-primary` heredan el nuevo naranja
+- No se cambia estructura ni funcionalidad, solo identidad visual
 
