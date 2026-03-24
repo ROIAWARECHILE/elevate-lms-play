@@ -8,6 +8,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
 import Onboarding from "./pages/Onboarding";
+import JoinCompany from "./pages/JoinCompany";
 import Dashboard from "./pages/Dashboard";
 import Courses from "./pages/Courses";
 import CourseView from "./pages/CourseView";
@@ -38,6 +39,7 @@ const App = () => (
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="/join/:companySlug" element={<JoinCompany />} />
 
             {/* Protected app routes */}
             <Route path="/app" element={<AppLayout />}>

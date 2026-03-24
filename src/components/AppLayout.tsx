@@ -7,7 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { Loader2 } from "lucide-react";
 
 export function AppLayout() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const isMobile = useIsMobile();
 
   if (loading) {
@@ -20,6 +20,11 @@ export function AppLayout() {
 
   if (!user) {
     return <Navigate to="/auth" replace />;
+  }
+
+  // Redirect users without a company to onboarding
+  if (!loading && profile && !profile.company_id) {
+    return <Navigate to="/onboarding" replace />;
   }
 
   return (

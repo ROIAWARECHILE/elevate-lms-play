@@ -138,7 +138,14 @@ export default function LessonView() {
             </div>
 
             <div className="prose prose-sm max-w-none mb-8">
-              {lesson?.content?.text ? (
+              {lesson?.content?.blocks && Array.isArray(lesson.content.blocks) && lesson.content.blocks.length > 0 ? (
+                lesson.content.blocks.map((block: any, idx: number) => {
+                  if (block.type === "heading") {
+                    return <h3 key={idx} className="text-lg font-bold text-foreground mt-4 mb-2">{block.text}</h3>;
+                  }
+                  return <p key={idx} className="text-foreground leading-relaxed mb-3">{block.text}</p>;
+                })
+              ) : lesson?.content?.text ? (
                 <div className="whitespace-pre-wrap text-foreground leading-relaxed">
                   {lesson.content.text}
                 </div>
