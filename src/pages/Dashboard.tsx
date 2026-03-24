@@ -8,6 +8,7 @@ import { BookOpen, Trophy, Flame, Zap, Target, TrendingUp, Users, Award, ArrowRi
 import { motion } from "framer-motion";
 import { WalkthroughOverlay } from "@/components/WalkthroughOverlay";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { KibboExpression } from "@/components/KibboExpression";
 import { Link } from "react-router-dom";
 
 const fadeIn = {
