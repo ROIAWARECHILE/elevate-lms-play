@@ -74,12 +74,17 @@ export default function QuizView() {
   const isCorrect = selectedAnswer === currentQuestion?.correct_answer;
   const progressPct = questions.length > 0 ? ((currentIndex + (showFeedback ? 1 : 0)) / questions.length) * 100 : 0;
 
+  // Use ref to track correct count reliably across React state batching
+  const correctCountRef = { current: correctCount };
+
   const handleAnswer = (answer: string) => {
     if (showFeedback) return;
     setSelectedAnswer(answer);
     setShowFeedback(true);
     if (answer === currentQuestion.correct_answer) {
-      setCorrectCount((c) => c + 1);
+      const newCount = correctCount + 1;
+      setCorrectCount(newCount);
+      correctCountRef.current = newCount;
     }
   };
 
@@ -89,8 +94,7 @@ export default function QuizView() {
       setSelectedAnswer(null);
       setShowFeedback(false);
     } else {
-      const finalCorrect = correctCount + (selectedAnswer === currentQuestion?.correct_answer ? 1 : 0);
-      setCorrectCount(finalCorrect);
+      const finalCorrect = correctCountRef.current;
       setFinished(true);
       saveResult(finalCorrect);
     }

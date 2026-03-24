@@ -22,6 +22,11 @@ export function AppLayout() {
     return <Navigate to="/auth" replace />;
   }
 
+  // Redirect users without a company to onboarding
+  if (!loading && profile && !profile.company_id) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
   return (
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
