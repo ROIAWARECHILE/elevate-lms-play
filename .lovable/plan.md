@@ -1,89 +1,93 @@
 
 
-# Plan: Expresiones de Kibbo en Contextos Clave
+# Plan: Fix Organization Creation, Links & RLS Issues
 
-## Analisis de la Imagen
+## Issues Found
 
-La imagen contiene 9 expresiones del zorro Kibbo, cada una con una emocion distinta:
+### 1. Onboarding: Can't Create Organization (Critical)
+The `Onboarding.tsx` flow does 3 steps: insert company, update profile, upsert admin role. Step 3 fails because `user_roles` has an ALL RLS policy requiring `has_role(auth.uid(), 'admin')`. A new user only has `collaborator` role (from the `handle_new_user` trigger), so they can't insert the `admin` role for themselves. The company gets created but the user is never made admin.
 
-1. **Celebrando** (confetti, brazos arriba) — victoria/logro
-2. **Pulgar arriba** (sentado, aprobando) — buen trabajo/confirmacion
-3. **Pensando** (signo de interrogacion) — duda/quiz
-4. **Sorprendido** (sparkles, boca abierta) — level up/nuevo logro
-5. **Triste** (cabizbajo) — quiz reprobado/error
-6. **Determinado** (fuego, puños) — streak/motivacion
-7. **Durmiendo** (zzz, nube) — inactividad/sin streak
-8. **Bailando** (musica, movimiento) — celebracion casual/leccion completada
-9. **Emocionado** (manos juntas, signos exclamacion) — bienvenida/onboarding
+**Fix:** Create a `SECURITY DEFINER` database function `create_company_for_user(name, slug)` that atomically: creates the company, updates the profile's `company_id`, deletes the collaborator role, and inserts the admin role. Called from the client as a single RPC.
 
-## Mapeo de Expresiones a Contextos
+### 2. JoinCompany: Can't Find Company by Slug (Critical)
+The companies SELECT RLS policy is `id = get_user_company_id(auth.uid())` — a user can only see the company they already belong to. A new user trying to join via `/join/acme-corp` can't query the company by slug because they aren't in it yet.
 
-| Expresion | Donde se usa |
+**Fix:** Add a new SELECT RLS policy on `companies` allowing any authenticated user to look up a company by slug: `true` for SELECT (since company names are not sensitive, and users need the slug to join). Alternatively, a more restrictive policy that only allows `get_user_company_id(auth.uid()) IS NULL` users to read.
+
+### 3. All Links Use `window.location.origin` (Wrong Domain)
+Three places generate links using `window.location.origin`:
+- `AdminSettings.tsx` line 85: invite link display
+- `AdminUsers.tsx` line 92: copy invite link
+- `Auth.tsx` line 44: email redirect URL
+
+In preview mode, this generates `https://id-preview--xxx.lovable.app/join/slug` instead of the published domain `https://elevate-lms-play.lovable.app`. Invite links shared externally won't work.
+
+**Fix:** Create a utility constant `APP_URL` in `src/lib/constants.ts` that uses `import.meta.env.VITE_APP_URL || window.location.origin`. Set `VITE_APP_URL=https://elevate-lms-play.lovable.app` in `.env`. Use this constant in all three files.
+
+### 4. Auth Redirect Ignores `?redirect=` Param
+`JoinCompany.tsx` redirects to `/auth?redirect=/join/slug` but `Auth.tsx` always navigates to `/app` on login (line 25, 29). The redirect param is never read.
+
+**Fix:** Read `searchParams.get("redirect")` in `Auth.tsx` and navigate there instead of hardcoded `/app`.
+
+## Implementation
+
+### Step 1: Database Migration
+Create function and RLS policy:
+```sql
+-- Function to atomically create company + assign admin role
+CREATE OR REPLACE FUNCTION public.create_company_for_user(
+  _name text, _slug text
+) RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE _company_id uuid; _user_id uuid;
+BEGIN
+  _user_id := auth.uid();
+  IF get_user_company_id(_user_id) IS NOT NULL THEN
+    RAISE EXCEPTION 'User already belongs to a company';
+  END IF;
+  INSERT INTO companies (name, slug) VALUES (_name, _slug)
+    RETURNING id INTO _company_id;
+  UPDATE profiles SET company_id = _company_id WHERE id = _user_id;
+  DELETE FROM user_roles WHERE user_id = _user_id;
+  INSERT INTO user_roles (user_id, role) VALUES (_user_id, 'admin');
+  RETURN _company_id;
+END; $$;
+
+-- Allow any authenticated user to view companies (for join flow)
+CREATE POLICY "Anyone can view companies by slug"
+  ON public.companies FOR SELECT TO authenticated
+  USING (true);
+```
+Also drop the old restrictive SELECT policy `Users can view own company` since the new one is broader.
+
+### Step 2: Create `src/lib/constants.ts`
+```ts
+export const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
+```
+
+### Step 3: Update `.env`
+Add `VITE_APP_URL=https://elevate-lms-play.lovable.app`
+
+### Step 4: Update `Onboarding.tsx`
+Replace the 3-step insert/update/upsert with a single `supabase.rpc('create_company_for_user', { _name, _slug })`.
+
+### Step 5: Update `Auth.tsx`
+Read `redirect` search param. On auth state change or session check, navigate to `redirect || "/app"`.
+
+### Step 6: Update link generation
+Replace `window.location.origin` with `APP_URL` in `AdminSettings.tsx`, `AdminUsers.tsx`, and `Auth.tsx` (emailRedirectTo).
+
+## Files
+
+| File | Action |
 |---|---|
-| Celebrando | Quiz aprobado (resultado), confetti celebration |
-| Pulgar arriba | Leccion completada, Dashboard "continuar aprendiendo" |
-| Pensando | QuizView durante las preguntas, empty states |
-| Sorprendido | LevelUpModal al subir de nivel |
-| Triste | Quiz reprobado, 404 NotFound |
-| Determinado | Streak activo en Dashboard, sidebar streak counter |
-| Durmiendo | Streak perdido (streak = 0), Dashboard sin actividad |
-| Bailando | XpAnimation, onboarding completado |
-| Emocionado | WalkthroughOverlay, Landing hero, Auth page |
-
-## Implementacion
-
-### 1. Crear assets individuales
-Copiar la imagen de expresiones y usar la API de generacion de imagen para extraer cada expresion individualmente con fondo transparente. Guardarlas como:
-- `src/assets/kibbo-celebrating.png`
-- `src/assets/kibbo-thumbsup.png`
-- `src/assets/kibbo-thinking.png`
-- `src/assets/kibbo-surprised.png`
-- `src/assets/kibbo-sad.png`
-- `src/assets/kibbo-determined.png`
-- `src/assets/kibbo-sleeping.png`
-- `src/assets/kibbo-dancing.png`
-- `src/assets/kibbo-excited.png`
-
-### 2. Crear componente `KibboExpression`
-Nuevo componente que acepta una prop `expression` y renderiza la imagen correspondiente con animacion framer-motion contextual:
-- `celebrating`: bounce-in + float
-- `thumbsup`: scale spring
-- `thinking`: sutil head-tilt (rotate oscillation)
-- `surprised`: scale pop + sparkle
-- `sad`: slow fade-in + slight droop
-- `determined`: pulse-glow ring
-- `sleeping`: gentle float (breathing)
-- `dancing`: wiggle lateral
-- `excited`: bounce rapido
-
-### 3. Integrar en componentes existentes
-
-| Archivo | Cambio |
-|---|---|
-| `src/components/LevelUpModal.tsx` | Reemplazar icono Trophy con Kibbo sorprendido |
-| `src/components/XpAnimation.tsx` | Agregar Kibbo bailando junto al "+XP" |
-| `src/components/WalkthroughOverlay.tsx` | Usar Kibbo emocionado en vez del KibboMascot generico |
-| `src/pages/QuizView.tsx` | Kibbo pensando durante quiz, celebrando si aprueba, triste si reprueba |
-| `src/pages/LessonView.tsx` | Kibbo pulgar arriba al completar leccion |
-| `src/pages/Dashboard.tsx` | Kibbo determinado si tiene streak, durmiendo si streak=0, pulgar arriba en "continuar aprendiendo" |
-| `src/pages/NotFound.tsx` | Kibbo triste con mensaje amigable |
-| `src/pages/Auth.tsx` | Kibbo emocionado saludando |
-| `src/pages/Landing.tsx` | Kibbo emocionado en hero (ya usa KibboMascot, swap por expresion) |
-| `src/pages/Onboarding.tsx` | Kibbo emocionado durante setup |
-
-### 4. Archivos a crear/modificar
-
-| Archivo | Accion |
-|---|---|
-| `src/assets/kibbo-*.png` (9 archivos) | Crear — expresiones individuales sin fondo |
-| `src/components/KibboExpression.tsx` | Crear — componente con selector de expresion + animacion |
-| `src/components/LevelUpModal.tsx` | Modificar — usar KibboExpression surprised |
-| `src/components/XpAnimation.tsx` | Modificar — agregar KibboExpression dancing |
-| `src/components/WalkthroughOverlay.tsx` | Modificar — usar KibboExpression excited |
-| `src/pages/QuizView.tsx` | Modificar — thinking/celebrating/sad |
-| `src/pages/LessonView.tsx` | Modificar — thumbsup al completar |
-| `src/pages/Dashboard.tsx` | Modificar — determined/sleeping segun streak |
-| `src/pages/NotFound.tsx` | Modificar — sad con mensaje |
-| `src/pages/Auth.tsx` | Modificar — excited |
-| `src/pages/Onboarding.tsx` | Modificar — excited |
+| Migration SQL | Create function + RLS policy |
+| `src/lib/constants.ts` | Create — APP_URL constant |
+| `.env` | Add VITE_APP_URL |
+| `src/pages/Onboarding.tsx` | Use RPC instead of 3-step flow |
+| `src/pages/Auth.tsx` | Handle redirect param |
+| `src/pages/admin/AdminSettings.tsx` | Use APP_URL |
+| `src/pages/admin/AdminUsers.tsx` | Use APP_URL |
+| `src/pages/JoinCompany.tsx` | Minor — works now with new RLS |
 
