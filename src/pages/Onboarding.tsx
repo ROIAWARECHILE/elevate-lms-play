@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Zap, Loader2, Building2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Onboarding() {
