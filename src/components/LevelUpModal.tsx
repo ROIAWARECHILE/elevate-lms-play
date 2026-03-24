@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Trophy, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { KibboExpression } from "./KibboExpression";
 
 interface LevelUpModalProps {
   show: boolean;
