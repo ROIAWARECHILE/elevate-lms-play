@@ -1,82 +1,81 @@
 
 
-# Plan: Flujo Completo Funcional + Gestión de Usuarios
+# Plan: Mejoras de UX, Animaciones y Efectos
 
-## Issues Found
+## Analisis Actual
 
-### 1. Lesson Content Not Rendering (Critical)
-`LessonView.tsx` line 141 checks `lesson?.content?.text` but the seed data stores content as `{ blocks: [{type, text}] }`. Result: every lesson shows "Esta lección no tiene contenido todavía."
+La app tiene animaciones basicas con framer-motion (fade-in, scale) pero carece de las micro-interacciones, transiciones de pagina, y efectos de feedback que hacen que una app tipo Duolingo se sienta viva y adictiva.
 
-**Fix:** Render `content.blocks` array — map each block to heading/paragraph based on `type`.
+## Mejoras Propuestas
 
-### 2. QuizView Double-Counting Bug
-In `handleNext` (line 92), `correctCount` already includes the current answer (set in `handleAnswer` line 82). But `finalCorrect` adds +1 again if correct. This double-counts the last answer.
+### 1. Transiciones de Pagina (Page Transitions)
+Wrap `<Outlet>` en `AppLayout.tsx` con `AnimatePresence` + `motion.div` usando la key de `location.pathname`. Cada pagina entra con fade+slide y sale suavemente.
 
-**Fix:** At the last question, `correctCount` is already updated via `setCorrectCount` in `handleAnswer`. Since React batches state, by the time `handleNext` runs, `correctCount` may or may not reflect the update. The safest fix: track correct count via ref, or compute `finalCorrect` correctly without the conditional.
+### 2. Skeleton Loaders en Vez de Spinners
+Reemplazar los `Loader2` spinner en `CourseView`, `LessonView`, `Courses`, y `Leaderboard` con skeleton placeholders (pulsating cards/lines) que muestran la estructura de la pagina mientras carga. Mas profesional y menos jarring.
 
-### 3. AdminUsers — Placeholder Only
-Currently shows "Próximamente". Needs a real user management panel.
+### 3. Micro-interacciones en Cards y Botones
+- **Course cards** (`Courses.tsx`): agregar `whileHover={{ y: -4, scale: 1.02 }}` y `whileTap={{ scale: 0.98 }}` para que las cards se eleven al hover
+- **Stats cards** (`Dashboard.tsx`): counter animation — los numeros se animan de 0 al valor real usando framer-motion `useMotionValue` + `animate`
+- **Quiz answer buttons** (`QuizView.tsx`): shake animation cuando la respuesta es incorrecta, bounce cuando es correcta
+- **Lesson complete button**: pulse glow effect antes de presionar
 
-**Fix:** Build functional page with:
-- Table of company users (from `profiles` + `user_roles`)
-- Invite collaborator by email (Supabase `auth.admin` won't work client-side, so use an invite flow via edge function or simple "copy invite link")
-- Toggle role between admin/collaborator
-- Show user status (XP, level, last activity)
+### 4. Confetti al Completar Quiz/Curso
+Agregar un componente `ConfettiEffect` que dispara particulas al aprobar un quiz o completar una leccion. Implementado con canvas o CSS keyframes — ligero, sin dependencia extra.
 
-### 4. AdminSettings — Placeholder Only
-Needs company name/logo editing.
+### 5. Course Path Visual Mejorado (CourseView)
+- Los nodos completados hacen un bounce sutil al entrar en vista
+- El nodo activo tiene un ring animado tipo "pulse" giratorio (no `animate-pulse` basico, sino un gradient ring rotating)
+- Agregar particulas/sparkles pequeñas alrededor del nodo activo
+- La linea conectora se anima de arriba a abajo como "llenandose" con el progreso
 
-**Fix:** Build form to update company name, slug, primary_color. Uses existing `companies` table + RLS update policy.
+### 6. Improved Streak Counter Animation
+En el dashboard y sidebar, cuando el streak cambia: el numero hace un scale bounce (1 → 1.3 → 1) con un flash de color. Icono de fuego con animacion de flicker sutil.
 
-### 5. Onboarding Doesn't Redirect Properly
-After creating a company, `Onboarding` navigates to `/app` but `AppLayout` doesn't check if user has a company. A user without a company can access `/app` directly and see broken data.
+### 7. Progress Bar Animada
+Las barras de progreso (`Progress`) se animan de 0 al valor real con easing cuando la pagina carga, en vez de aparecer estaticas.
 
-**Fix:** In `AppLayout`, if user is loaded and `profile.company_id` is null, redirect to `/onboarding`.
+### 8. Landing Page: Parallax y Stagger
+- Secciones de features con stagger animation mejorada (entran de abajo con spring)
+- Stats section: los numeros se "cuentan" de 0 al valor final (counting animation)
+- Hero: texto principal con animacion palabra por palabra (typewriter-like effect sutil)
 
-### 6. No Invite/Registration Flow for Collaborators
-Currently, new users register via `/auth` and land in `/app` with no `company_id`. There's no way for admins to invite collaborators or for collaborators to join a company.
+### 9. Toast/Feedback Mejorado
+Reemplazar toasts genéricos con feedback visual inline:
+- XP ganado: el numero de XP en el sidebar/header hace un "bump" visual
+- Streak incrementado: icono de fuego hace flash
 
-**Fix:** 
-- Add invite link system: admin generates a link like `/join/{company_slug}`
-- New page `JoinCompany.tsx`: user sees company name, clicks "Unirse", profile gets updated with `company_id`
-- Admin can copy invite link from AdminUsers page
+### 10. Dark Mode Smooth Transition
+Aunque no se implementa toggle aun, preparar las transiciones de color con `transition-colors duration-300` en el body para cuando se agregue.
 
-## Implementation Plan
+---
 
-### Step 1: Fix LessonView content rendering
-Render `content.blocks` array with proper heading/paragraph styling.
+## Archivos a Crear/Modificar
 
-### Step 2: Fix QuizView scoring
-Use a local variable to track the final count instead of relying on async state.
-
-### Step 3: AppLayout — redirect if no company
-Check `profile?.company_id` after auth. If null, redirect to `/onboarding`.
-
-### Step 4: Build AdminUsers page
-- Fetch all profiles in company with their roles
-- Table with: name, email (from user metadata), role, XP, level, last activity
-- Button to copy invite link (`/join/{company_slug}`)
-- Ability to change user role (admin/collaborator)
-
-### Step 5: Build JoinCompany page
-- Route: `/join/:companySlug`
-- Fetch company by slug
-- If user is logged in and has no company, update their profile with `company_id`
-- If not logged in, redirect to `/auth?redirect=/join/:slug`
-
-### Step 6: Build AdminSettings page
-- Form: company name, primary color
-- Updates `companies` table
-
-### Files to create/modify
-
-| File | Action |
+| Archivo | Accion |
 |---|---|
-| `src/pages/LessonView.tsx` | Fix content rendering |
-| `src/pages/QuizView.tsx` | Fix score double-count |
-| `src/components/AppLayout.tsx` | Add company_id check + redirect |
-| `src/pages/admin/AdminUsers.tsx` | Full user management UI |
-| `src/pages/admin/AdminSettings.tsx` | Company settings form |
-| `src/pages/JoinCompany.tsx` | New — join company via invite link |
-| `src/App.tsx` | Add `/join/:companySlug` route |
+| `src/components/ConfettiEffect.tsx` | Crear — efecto confetti ligero con CSS/canvas |
+| `src/components/AnimatedCounter.tsx` | Crear — componente que anima numeros de 0 a N |
+| `src/components/PageTransition.tsx` | Crear — wrapper de transicion de pagina |
+| `src/components/SkeletonLoaders.tsx` | Crear — skeletons para courses, leaderboard, lesson |
+| `src/components/AppLayout.tsx` | Modificar — integrar PageTransition en Outlet |
+| `src/pages/Courses.tsx` | Modificar — hover animations en cards, skeleton loader |
+| `src/pages/CourseView.tsx` | Modificar — animated path line, active node ring |
+| `src/pages/QuizView.tsx` | Modificar — shake/bounce feedback, confetti al aprobar |
+| `src/pages/Dashboard.tsx` | Modificar — animated counters, streak animation |
+| `src/pages/LessonView.tsx` | Modificar — confetti al completar, pulse button |
+| `src/pages/Landing.tsx` | Modificar — counting stats, stagger mejorado |
+| `src/pages/Leaderboard.tsx` | Modificar — skeleton loader, row hover effects |
+| `src/pages/Profile.tsx` | Modificar — animated progress bar, counter animation |
+| `src/index.css` | Modificar — agregar keyframes para shake, confetti, pulse-ring |
+| `tailwind.config.ts` | Modificar — agregar animations shake, bounce-in, confetti |
+
+## Detalles Tecnicos
+
+- Confetti: implementado con ~30 `div` elements con keyframes CSS aleatorios (no libreria externa), disparado por un componente controlado con prop `trigger`
+- AnimatedCounter: usa `useEffect` + `requestAnimationFrame` para interpolar de 0 al valor target con easing
+- Page transitions: `AnimatePresence` con `mode="wait"` en el Outlet wrapper, cada pagina exporta un `motion.div` wrapper
+- Shake animation: `@keyframes shake { 0%,100% { translateX(0) } 25% { translateX(-4px) } 75% { translateX(4px) } }` — 300ms
+- Active node ring: `@keyframes spin-ring` con un conic-gradient que rota 360 grados continuamente
+- Skeleton loaders: componentes con `animate-pulse` y formas que replican la UI final (cards, text lines, circles)
 
