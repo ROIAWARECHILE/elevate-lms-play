@@ -75,9 +75,7 @@ export default function Landing() {
       <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-lg border-b border-border">
         <div className="container mx-auto flex items-center justify-between h-16 px-4">
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-              <Zap className="w-5 h-5 text-primary-foreground" />
-            </div>
+            <img src={kibboLogo} alt="Kibbo" className="w-8 h-8 rounded-lg object-cover" />
             <span className="text-xl font-bold text-foreground">Kibbo</span>
           </Link>
           <div className="flex items-center gap-3">
