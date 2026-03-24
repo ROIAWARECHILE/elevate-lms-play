@@ -170,7 +170,7 @@ export default function LessonView() {
                 animate={{ opacity: 1, scale: 1 }}
                 className="flex items-center gap-3 p-4 rounded-xl bg-success/10 text-success"
               >
-                <CheckCircle2 className="w-6 h-6" />
+                <KibboExpression expression="thumbsup" className="w-12 h-12 flex-shrink-0" />
                 <div>
                   <p className="font-semibold">¡Lección completada!</p>
                   <p className="text-sm opacity-80">Has ganado {lesson?.xp_reward || 10} XP</p>
