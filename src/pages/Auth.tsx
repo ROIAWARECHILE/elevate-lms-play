@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import kibboMascot from "@/assets/kibbo-mascot.png";
+import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Auth() {
