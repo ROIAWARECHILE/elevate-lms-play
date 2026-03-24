@@ -14,6 +14,7 @@ interface Profile {
   xp_total: number;
   current_streak: number;
   longest_streak: number;
+  last_activity_date: string | null;
   level: number;
 }
 
