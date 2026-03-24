@@ -456,6 +456,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_company_for_user: {
+        Args: { _name: string; _slug: string }
+        Returns: string
+      }
       get_user_company_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
