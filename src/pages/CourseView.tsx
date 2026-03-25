@@ -105,7 +105,7 @@ function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward }
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="mx-auto max-w-xs rounded-2xl gradient-primary p-4 text-center text-primary-foreground"
+      className="mx-auto max-w-xs rounded-2xl gradient-navy p-4 text-center text-navy-foreground"
     >
       <div className="flex items-center justify-center gap-2 mb-1">
         <Star className="w-4 h-4" />
