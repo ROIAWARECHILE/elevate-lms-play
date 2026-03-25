@@ -159,7 +159,7 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
         </motion.div>
       </div>
       <span className={`text-[11px] max-w-[100px] text-center truncate font-medium ${
-        node.done ? "text-success" : isActive ? "text-primary font-bold" : "text-muted-foreground"
+        node.done ? "text-accent" : isActive ? "text-primary font-bold" : "text-muted-foreground"
       }`}>
         {node.title}
       </span>
