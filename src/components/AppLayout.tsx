@@ -27,7 +27,7 @@ export function AppLayout() {
   }
 
   if (!loading && profile && !profile.company_id) {
-    return <Navigate to="/onboarding" replace />;
+    return <Navigate to="/auth?choose=true" replace />;
   }
 
   // Show pending approval screen

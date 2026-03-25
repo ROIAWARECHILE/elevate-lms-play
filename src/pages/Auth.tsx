@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,61 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ArrowLeft, Loader2, Building2, Users } from "lucide-react";
 import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { APP_URL } from "@/lib/constants";
+
+function RoleChoiceScreen() {
+  const navigate = useNavigate();
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 relative">
+      <div className="absolute inset-0 gradient-hero opacity-5" />
+      <div className="w-full max-w-md relative z-10">
+        <Card className="shadow-elevated border-border">
+          <CardHeader className="text-center pb-4">
+            <div className="flex justify-center mb-4">
+              <KibboExpression expression="excited" className="w-20 h-20" />
+            </div>
+            <CardTitle className="text-2xl font-bold">¿Cómo quieres usar Kibbo?</CardTitle>
+            <CardDescription>Elige tu rol para continuar</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button
+              onClick={() => navigate("/onboarding")}
+              variant="outline"
+              className="w-full h-auto p-4 flex items-start gap-4 text-left"
+            >
+              <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0">
+                <Building2 className="w-6 h-6 text-primary-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground">Soy empresa</p>
+                <p className="text-sm text-muted-foreground font-normal">
+                  Quiero crear mi workspace y capacitar a mi equipo
+                </p>
+              </div>
+            </Button>
+            <Button
+              onClick={() => navigate("/join")}
+              variant="outline"
+              className="w-full h-auto p-4 flex items-start gap-4 text-left"
+            >
+              <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
+                <Users className="w-6 h-6 text-accent-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-foreground">Soy colaborador</p>
+                <p className="text-sm text-muted-foreground font-normal">
+                  Tengo un código de invitación de mi empresa
+                </p>
+              </div>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
 
 export default function Auth() {
   const [searchParams] = useSearchParams();
@@ -18,28 +72,55 @@ export default function Auth() {
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
   const [showRoleChoice, setShowRoleChoice] = useState(false);
+  const justRegisteredRef = useRef(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user, profile, loading: authLoading } = useAuth();
 
   const redirectTo = searchParams.get("redirect") || "/app";
+  const chooseMode = searchParams.get("choose") === "true";
+
+  // If user is authenticated but has no company, show role choice
+  useEffect(() => {
+    if (!authLoading && user && profile && !profile.company_id) {
+      setShowRoleChoice(true);
+    }
+  }, [authLoading, user, profile]);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session && !showRoleChoice) {
+      // Skip auto-redirect if user just registered or is choosing role
+      if (justRegisteredRef.current) return;
+      if (showRoleChoice || chooseMode) return;
+
+      if (session && event === "SIGNED_IN") {
         navigate(redirectTo);
       }
     });
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session && !showRoleChoice) navigate(redirectTo);
-    });
+
+    // For returning users who are already logged in (not registering)
+    if (!justRegisteredRef.current && !chooseMode) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session && !showRoleChoice) {
+          // Let the profile-based useEffect handle no-company users
+          if (!authLoading && profile?.company_id) {
+            navigate(redirectTo);
+          }
+        }
+      });
+    }
+
     return () => subscription.unsubscribe();
-  }, [navigate, redirectTo, showRoleChoice]);
+  }, [navigate, redirectTo, showRoleChoice, chooseMode, authLoading, profile]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
       if (isRegister) {
+        // Mark as just registered BEFORE signUp so the auth listener won't redirect
+        justRegisteredRef.current = true;
+
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -48,12 +129,14 @@ export default function Auth() {
             emailRedirectTo: `${APP_URL}${redirectTo}`,
           },
         });
-        if (error) throw error;
+        if (error) {
+          justRegisteredRef.current = false;
+          throw error;
+        }
         toast({
           title: "¡Cuenta creada!",
           description: "Revisa tu correo para confirmar tu cuenta.",
         });
-        // Show role choice after successful registration
         setShowRoleChoice(true);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -70,58 +153,8 @@ export default function Auth() {
     }
   };
 
-  // Role choice screen after registration
-  if (showRoleChoice) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-4 relative">
-        <div className="absolute inset-0 gradient-hero opacity-5" />
-        <div className="w-full max-w-md relative z-10">
-          <Card className="shadow-elevated border-border">
-            <CardHeader className="text-center pb-4">
-              <div className="flex justify-center mb-4">
-                <KibboExpression expression="excited" className="w-20 h-20" />
-              </div>
-              <CardTitle className="text-2xl font-bold">¿Cómo quieres usar Kibbo?</CardTitle>
-              <CardDescription>
-                Elige tu rol para continuar
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={() => navigate("/onboarding")}
-                variant="outline"
-                className="w-full h-auto p-4 flex items-start gap-4 text-left"
-              >
-                <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0">
-                  <Building2 className="w-6 h-6 text-primary-foreground" />
-                </div>
-                <div>
-                  <p className="font-semibold text-foreground">Soy empresa</p>
-                  <p className="text-sm text-muted-foreground font-normal">
-                    Quiero crear mi workspace y capacitar a mi equipo
-                  </p>
-                </div>
-              </Button>
-              <Button
-                onClick={() => navigate("/join")}
-                variant="outline"
-                className="w-full h-auto p-4 flex items-start gap-4 text-left"
-              >
-                <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
-                  <Users className="w-6 h-6 text-accent-foreground" />
-                </div>
-                <div>
-                  <p className="font-semibold text-foreground">Soy colaborador</p>
-                  <p className="text-sm text-muted-foreground font-normal">
-                    Tengo un código de invitación de mi empresa
-                  </p>
-                </div>
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
+  if (showRoleChoice || chooseMode) {
+    return <RoleChoiceScreen />;
   }
 
   return (
