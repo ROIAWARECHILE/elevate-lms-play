@@ -1,130 +1,49 @@
 
 
-# Plan: Sistema de Invitaciones por Codigo + Aprobacion de Admin
+# Plan: Fix Registration Role Choice & Admin Data Display
 
-## Resumen
+## Root Cause Analysis
 
-Redisenar el flujo de registro/invitacion: el usuario elige si es **empresa** o **colaborador**. Las empresas reciben un **codigo unico** (6 caracteres). Los colaboradores ingresan el codigo y quedan **pendientes** hasta que un admin los apruebe. Todos los links usan `https://kibbolearn.online/`.
+### Issue 1: Role choice screen never appears after registration
+In `Auth.tsx`, `supabase.auth.signUp()` auto-creates a session. The `onAuthStateChange` listener (line 27-31) fires immediately with the new session, and since `showRoleChoice` is still `false` at that point, it navigates to `/app`. Then `AppLayout` sees no `company_id` and redirects to `/onboarding` — skipping the "Soy empresa / Soy colaborador" choice entirely.
 
-## Cambios en Base de Datos
+**Fix:** Prevent auto-navigation during registration. Only auto-redirect on `SIGNED_IN` event when the user is logging in (not registering). After successful signUp, show the role choice screen without the auth listener interfering.
 
-### 1. Agregar columna `invite_code` a `companies`
-Codigo alfanumerico de 6 caracteres, unico, generado automaticamente al crear empresa.
+### Issue 2: AppLayout redirects users without company_id to /onboarding
+Line 29-31 in `AppLayout.tsx`: any user without `company_id` gets sent to `/onboarding` (company creation). But collaborators who haven't joined yet should go to `/join` instead. Currently there's no way to distinguish — both new companies and new collaborators land on onboarding.
 
-### 2. Agregar columna `status` a `profiles`
-Para manejar el estado de aprobacion: `pending`, `active`, `rejected`. Default: `active` (para empresas que se crean a si mismas).
+**Fix:** Remove the forced redirect to `/onboarding` from `AppLayout`. Instead, handle routing in `Auth.tsx` post-registration based on role choice. Users who already have a session but no company should see the role choice screen again.
 
-### 3. Actualizar funciones RPC
+### Issue 3: Admin courses/invite code not displaying
+The `AdminUsers.tsx` fetches company data and invite code correctly in the code. The likely issue is that after creating a company via RPC, the `refreshProfile` call updates the profile but the admin role query in `useAuth` may not reflect immediately due to caching or the `user_roles` RLS policy (the `Admins can manage roles` ALL policy checks `has_role(auth.uid(), 'admin')` — but the role was just assigned by the RPC, so the client query runs before the role is fully committed or cached).
 
-- **`create_company_for_user`**: generar `invite_code` aleatorio al crear la empresa.
-- **`join_company_by_code(_code text)`**: nueva funcion que busca empresa por codigo, asigna `company_id` al perfil con `status = 'pending'`, y asigna rol `collaborator`.
-- **`approve_user(_user_id uuid)`** y **`reject_user(_user_id uuid)`**: funciones SECURITY DEFINER para que admins aprueben/rechacen usuarios pendientes.
+**Fix:** Add a small delay or force re-fetch in `refreshProfile` to ensure roles are reloaded. Also ensure `fetchProfile` fetches roles correctly after company creation.
 
-### 4. RLS para perfiles pendientes
-Los usuarios con `status = 'pending'` no podran ver cursos ni contenido. Agregar condicion a las politicas SELECT de cursos/lecciones/quizzes: verificar que el perfil del usuario tenga `status = 'active'`.
+## Implementation
 
-```sql
--- Ejemplo de SQL a ejecutar
-ALTER TABLE companies ADD COLUMN invite_code text UNIQUE;
-ALTER TABLE profiles ADD COLUMN status text NOT NULL DEFAULT 'active';
+### Step 1: Fix Auth.tsx — Role choice race condition
+- Track registration mode separately from auth state changes
+- On `signUp` success, set `showRoleChoice = true` **before** the auth listener can redirect
+- In the auth listener, skip navigation when `isRegister` is true and user just signed up
+- Use a ref to avoid stale closure issues with `showRoleChoice`
 
--- Generar codigos para empresas existentes
-UPDATE companies SET invite_code = upper(substr(md5(random()::text), 1, 6))
-WHERE invite_code IS NULL;
+### Step 2: Fix AppLayout.tsx — Smart redirect for users without company
+- Change line 29-31: instead of always redirecting to `/onboarding`, show a choice screen or redirect based on whether the user has already chosen a path
+- Alternative: keep the redirect but make it go to `/auth?choose=true` which shows the role picker
 
--- Funcion para unirse por codigo
-CREATE OR REPLACE FUNCTION public.join_company_by_code(_code text)
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE _company_id uuid; _user_id uuid;
-BEGIN
-  _user_id := auth.uid();
-  IF get_user_company_id(_user_id) IS NOT NULL THEN
-    RAISE EXCEPTION 'User already belongs to a company';
-  END IF;
-  SELECT id INTO _company_id FROM companies WHERE invite_code = upper(_code);
-  IF _company_id IS NULL THEN RAISE EXCEPTION 'Invalid code'; END IF;
-  UPDATE profiles SET company_id = _company_id, status = 'pending' WHERE id = _user_id;
-  INSERT INTO user_roles (user_id, role) VALUES (_user_id, 'collaborator')
-  ON CONFLICT (user_id, role) DO NOTHING;
-  RETURN _company_id;
-END; $$;
+### Step 3: Fix Auth.tsx — Handle returning users without company
+- If a user is already authenticated but has no `company_id`, show the role choice screen
+- Read from `useAuth()` to check profile state
 
--- Aprobar/rechazar usuario
-CREATE OR REPLACE FUNCTION public.approve_user(_target_user_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  IF NOT has_role(auth.uid(), 'admin') THEN RAISE EXCEPTION 'Not admin'; END IF;
-  UPDATE profiles SET status = 'active'
-  WHERE id = _target_user_id
-    AND company_id = get_user_company_id(auth.uid());
-END; $$;
+### Step 4: Ensure refreshProfile reloads roles
+- In `useAuth.tsx`, make `refreshProfile` also re-fetch roles (it already does via `fetchProfile`)
+- Add a small guard to ensure the data is fresh
 
-CREATE OR REPLACE FUNCTION public.reject_user(_target_user_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN
-  IF NOT has_role(auth.uid(), 'admin') THEN RAISE EXCEPTION 'Not admin'; END IF;
-  DELETE FROM user_roles WHERE user_id = _target_user_id;
-  UPDATE profiles SET company_id = NULL, status = 'active'
-  WHERE id = _target_user_id
-    AND company_id = get_user_company_id(auth.uid());
-END; $$;
-```
+## Files
 
-## Cambios en Frontend
-
-### 1. Actualizar `.env`
-```
-VITE_APP_URL="https://kibbolearn.online"
-```
-
-### 2. Redisenar `Auth.tsx`
-Despues del registro, mostrar pantalla de eleccion:
-- **"Soy empresa"** → redirige a `/onboarding` (crear empresa)
-- **"Soy colaborador"** → redirige a `/join` (ingresar codigo)
-
-### 3. Redisenar `JoinCompany.tsx` → nueva ruta `/join`
-Ya no usa slug en URL. Muestra un formulario para ingresar el **codigo de 6 caracteres**. Al enviar, llama a `join_company_by_code`. Muestra pantalla de "Solicitud enviada, espera aprobacion".
-
-### 4. Eliminar ruta `/join/:companySlug`
-Reemplazar por `/join` sin parametros.
-
-### 5. Actualizar `Onboarding.tsx`
-Mostrar el codigo generado despues de crear empresa, para que el admin lo copie y comparta.
-
-### 6. Actualizar `AdminUsers.tsx`
-- Cambiar "Copiar enlace de invitacion" por **"Copiar codigo de invitacion"** (muestra el `invite_code`).
-- Agregar seccion de **usuarios pendientes** con botones "Aprobar" / "Rechazar".
-- Separar vista en tabs: "Activos" y "Pendientes".
-
-### 7. Actualizar `AdminSettings.tsx`
-- Mostrar el `invite_code` en vez del enlace slug.
-- Cambiar texto de `Enlace: APP_URL/join/slug` por `Codigo: XXXXXX`.
-
-### 8. Actualizar `AppLayout.tsx` / routing
-- Usuarios con `status = 'pending'` ven pantalla de espera en vez del dashboard.
-- Agregar estado `isPending` al AuthContext.
-
-### 9. Actualizar `useAuth.tsx`
-- Incluir `status` en el Profile interface.
-- Exponer `isPending: profile?.status === 'pending'`.
-
-### 10. Landing.tsx
-- Quitar link `/join` del footer (ya no funciona con slug).
-- Actualizar CTAs si necesario.
-
-## Archivos
-
-| Archivo | Accion |
+| File | Action |
 |---|---|
-| Migration SQL | Crear — invite_code, status, funciones RPC |
-| `.env` | Modificar — VITE_APP_URL a kibbolearn.online |
-| `src/hooks/useAuth.tsx` | Modificar — agregar status/isPending |
-| `src/pages/Auth.tsx` | Modificar — selector empresa/colaborador post-registro |
-| `src/pages/Onboarding.tsx` | Modificar — mostrar codigo al crear empresa |
-| `src/pages/JoinCompany.tsx` | Reescribir — formulario de codigo sin slug |
-| `src/pages/admin/AdminUsers.tsx` | Modificar — pendientes + codigo |
-| `src/pages/admin/AdminSettings.tsx` | Modificar — mostrar codigo |
-| `src/components/AppLayout.tsx` | Modificar — bloquear pendientes |
-| `src/pages/Landing.tsx` | Modificar — quitar link /join del footer |
-| `src/App.tsx` | Modificar — cambiar ruta /join/:slug a /join |
+| `src/pages/Auth.tsx` | Fix race condition — use ref for showRoleChoice, prevent auth listener redirect during registration |
+| `src/components/AppLayout.tsx` | Change no-company redirect to show role choice instead of forcing onboarding |
+| `src/hooks/useAuth.tsx` | Minor — ensure refreshProfile fully reloads roles |
 
