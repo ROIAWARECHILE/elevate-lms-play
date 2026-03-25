@@ -58,9 +58,9 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
           <span>Progreso</span>
           <span>{Math.round(progressPct)}%</span>
         </div>
-        <div className="h-2 bg-primary-foreground/20 rounded-full overflow-hidden">
+        <div className="h-2 bg-navy-foreground/20 rounded-full overflow-hidden">
           <motion.div
-            className="h-full bg-primary-foreground rounded-full"
+            className="h-full bg-accent rounded-full"
             initial={{ width: 0 }}
             animate={{ width: `${progressPct}%` }}
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
