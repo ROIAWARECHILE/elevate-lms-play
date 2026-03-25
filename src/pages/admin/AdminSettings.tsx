@@ -80,10 +80,10 @@ export default function AdminSettings() {
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="slug">Slug (enlace de invitación)</Label>
-              <Input id="slug" value={company?.slug || ""} disabled className="bg-muted" />
+              <Label htmlFor="code">Código de invitación</Label>
+              <Input id="code" value={company?.invite_code || ""} disabled className="bg-muted text-center text-lg font-mono tracking-widest" />
               <p className="text-xs text-muted-foreground">
-                Enlace: {APP_URL}/join/{company?.slug}
+                Comparte este código con tu equipo para que se unan.
               </p>
             </div>
             <div className="space-y-2">

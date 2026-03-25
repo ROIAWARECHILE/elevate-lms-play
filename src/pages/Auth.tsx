@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Building2, Users } from "lucide-react";
 import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 import { APP_URL } from "@/lib/constants";
@@ -17,6 +17,7 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showRoleChoice, setShowRoleChoice] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -24,15 +25,15 @@ export default function Auth() {
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
+      if (session && !showRoleChoice) {
         navigate(redirectTo);
       }
     });
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) navigate(redirectTo);
+      if (session && !showRoleChoice) navigate(redirectTo);
     });
     return () => subscription.unsubscribe();
-  }, [navigate, redirectTo]);
+  }, [navigate, redirectTo, showRoleChoice]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,6 +53,8 @@ export default function Auth() {
           title: "¡Cuenta creada!",
           description: "Revisa tu correo para confirmar tu cuenta.",
         });
+        // Show role choice after successful registration
+        setShowRoleChoice(true);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -66,6 +69,60 @@ export default function Auth() {
       setLoading(false);
     }
   };
+
+  // Role choice screen after registration
+  if (showRoleChoice) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 relative">
+        <div className="absolute inset-0 gradient-hero opacity-5" />
+        <div className="w-full max-w-md relative z-10">
+          <Card className="shadow-elevated border-border">
+            <CardHeader className="text-center pb-4">
+              <div className="flex justify-center mb-4">
+                <KibboExpression expression="excited" className="w-20 h-20" />
+              </div>
+              <CardTitle className="text-2xl font-bold">¿Cómo quieres usar Kibbo?</CardTitle>
+              <CardDescription>
+                Elige tu rol para continuar
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={() => navigate("/onboarding")}
+                variant="outline"
+                className="w-full h-auto p-4 flex items-start gap-4 text-left"
+              >
+                <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0">
+                  <Building2 className="w-6 h-6 text-primary-foreground" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">Soy empresa</p>
+                  <p className="text-sm text-muted-foreground font-normal">
+                    Quiero crear mi workspace y capacitar a mi equipo
+                  </p>
+                </div>
+              </Button>
+              <Button
+                onClick={() => navigate("/join")}
+                variant="outline"
+                className="w-full h-auto p-4 flex items-start gap-4 text-left"
+              >
+                <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
+                  <Users className="w-6 h-6 text-accent-foreground" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground">Soy colaborador</p>
+                  <p className="text-sm text-muted-foreground font-normal">
+                    Tengo un código de invitación de mi empresa
+                  </p>
+                </div>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative">

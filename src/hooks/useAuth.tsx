@@ -16,6 +16,7 @@ interface Profile {
   longest_streak: number;
   last_activity_date: string | null;
   level: number;
+  status: string;
 }
 
 interface AuthContextType {
@@ -24,6 +25,7 @@ interface AuthContextType {
   profile: Profile | null;
   roles: AppRole[];
   isAdmin: boolean;
+  isPending: boolean;
   loading: boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -35,6 +37,7 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   roles: [],
   isAdmin: false,
+  isPending: false,
   loading: true,
   signOut: async () => {},
   refreshProfile: async () => {},
@@ -103,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profile,
         roles,
         isAdmin: roles.includes("admin"),
+        isPending: profile?.status === "pending",
         loading,
         signOut,
         refreshProfile,
