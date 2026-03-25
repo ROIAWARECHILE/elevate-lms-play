@@ -150,7 +150,7 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
           whileTap={{ scale: 0.95 }}
         >
           {node.done ? (
-            <CheckCircle2 className="w-7 h-7 text-success-foreground" />
+            <CheckCircle2 className="w-7 h-7 text-accent-foreground" />
           ) : node.type === "quiz" ? (
             <Brain className={`w-7 h-7 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
           ) : (
