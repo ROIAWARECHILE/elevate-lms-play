@@ -233,7 +233,7 @@ function SvgConnectors({ nodes, nodeSpacing }: { nodes: PathNode[]; nodeSpacing:
           <motion.path
             key={`connector-${i}`}
             d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
-            stroke={bothDone ? "hsl(var(--success))" : "hsl(var(--border))"}
+            stroke={bothDone ? "hsl(var(--accent))" : "hsl(var(--border))"}
             strokeWidth={bothDone ? 3 : 2}
             fill="none"
             strokeLinecap="round"
