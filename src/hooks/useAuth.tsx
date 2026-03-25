@@ -95,7 +95,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshProfile = async () => {
-    if (user) await fetchProfile(user.id);
+    if (user) {
+      // Small delay to ensure DB writes (e.g. RPC role assignment) are committed
+      await new Promise((r) => setTimeout(r, 500));
+      await fetchProfile(user.id);
+    }
   };
 
   return (
