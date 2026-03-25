@@ -15,24 +15,29 @@ export default function JoinCompany() {
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
+  const [companyError, setCompanyError] = useState(false);
 
+  // Fetch company info (works for both anon and authenticated users)
   useEffect(() => {
+    if (!companySlug) return;
     supabase
       .from("companies")
-      .select("*")
-      .eq("slug", companySlug!)
+      .select("id, name, slug, logo_url, primary_color")
+      .eq("slug", companySlug)
       .single()
       .then(({ data, error }) => {
         if (data) setCompany(data);
+        else setCompanyError(true);
         setLoading(false);
       });
   }, [companySlug]);
 
+  // Redirect to auth if not logged in (after company loads so user sees the page)
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate(`/auth?redirect=/join/${companySlug}`);
+    if (!authLoading && !user && !loading) {
+      navigate(`/auth?redirect=/join/${companySlug}`, { replace: true });
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, loading]);
 
   // Already in a company
   useEffect(() => {
@@ -42,19 +47,18 @@ export default function JoinCompany() {
   }, [profile?.company_id]);
 
   const handleJoin = async () => {
-    if (!user || !company) return;
+    if (!user || !companySlug) return;
     setJoining(true);
 
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ company_id: company.id })
-        .eq("id", user.id);
+      const { error } = await supabase.rpc("join_company_by_slug", {
+        _slug: companySlug,
+      });
 
       if (error) throw error;
 
       await refreshProfile();
-      toast({ title: "¡Te uniste!", description: `Bienvenido a ${company.name}` });
+      toast({ title: "¡Te uniste!", description: `Bienvenido a ${company?.name}` });
       navigate("/app");
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -71,7 +75,7 @@ export default function JoinCompany() {
     );
   }
 
-  if (!company) {
+  if (companyError || !company) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <Card className="w-full max-w-md">
