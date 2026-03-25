@@ -41,7 +41,7 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="gradient-primary rounded-2xl p-6 md:p-8 text-primary-foreground"
+      className="gradient-navy rounded-2xl p-6 md:p-8 text-navy-foreground"
     >
       <Badge variant="secondary" className="mb-3">
         {course?.level === "beginner" ? "Básico" : course?.level === "intermediate" ? "Intermedio" : "Avanzado"}
