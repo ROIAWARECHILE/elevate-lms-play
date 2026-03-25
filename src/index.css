@@ -57,9 +57,9 @@
     --sidebar-border: 210 40% 22%;
     --sidebar-ring: 21 100% 60%;
 
-    --gradient-primary: linear-gradient(135deg, hsl(21 100% 60%), hsl(192 100% 50%));
-    --gradient-hero: linear-gradient(135deg, hsl(21 100% 60%), hsl(21 80% 55%), hsl(192 100% 50%));
-    --gradient-card: linear-gradient(135deg, hsl(21 60% 97%), hsl(192 60% 97%));
+    --gradient-primary: linear-gradient(135deg, hsl(24 100% 60%), hsl(24 100% 52%));
+    --gradient-hero: linear-gradient(135deg, hsl(24 100% 58%), hsl(197 100% 50%));
+    --gradient-card: linear-gradient(135deg, hsl(24 60% 97%), hsl(197 60% 97%));
     --shadow-primary: 0 4px 24px -4px hsl(21 100% 60% / 0.3);
     --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.04), 0 1px 2px -1px hsl(0 0% 0% / 0.04);
     --shadow-elevated: 0 10px 40px -10px hsl(0 0% 0% / 0.08);
