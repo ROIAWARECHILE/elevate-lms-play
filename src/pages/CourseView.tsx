@@ -138,14 +138,14 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
   ) : (
     <RouterLink to={node.link!} className="flex flex-col items-center gap-1.5 group">
       <div className="relative">
-        <motion.div
-          className={`w-16 h-16 rounded-full flex items-center justify-center border-4 transition-all ${
-            node.done
-              ? "bg-success border-success/30"
-              : isActive
-              ? "gradient-primary border-primary/30 shadow-primary animate-pulse-glow"
-              : "bg-card border-border group-hover:border-primary/40"
-          }`}
+          <motion.div
+            className={`w-16 h-16 rounded-full flex items-center justify-center border-4 transition-all ${
+              node.done
+                ? "bg-accent border-accent/30"
+                : isActive
+                ? "gradient-primary border-primary/30 shadow-primary animate-pulse-glow"
+                : "bg-card border-border group-hover:border-accent/40"
+            }`}
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
         >
