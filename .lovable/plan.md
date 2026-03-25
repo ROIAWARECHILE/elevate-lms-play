@@ -1,77 +1,77 @@
 
 
-# Plan: Redisenar Path de Cursos (estilo Duolingo)
+# Plan: Rediseño de Colores con Regla 60-30-10
 
-## Resumen
+## Análisis de la imagen
 
-Reescribir el path visual de `CourseView.tsx` eliminando las lineas verticales que cruzan los nodos, implementando un zigzag sinusoidal con conectores SVG curvos, nodos mas grandes, mascota Kibbo junto al nodo activo, y banners de modulo mejorados.
+La imagen muestra 4 colores clave de la marca Kibbo:
+- **Naranja (#FF6B35)** — CTAs principales (GET STARTED, Claim)
+- **Cyan (#00D4FF)** — Elementos interactivos (CONTINUE LESSON, barras de progreso)
+- **Navy (#1E3A5F)** — Estructura y peso visual (VIEW PROGRESS, streak badge, level up banner)
+- **Blanco/Crema** — Fondos y espacios
 
-## Cambios
+## Regla 60-30-10 aplicada
 
-### 1. `src/pages/CourseView.tsx` — Reescribir seccion del path
+| Proporción | Color | Uso |
+|---|---|---|
+| **60% — Navy + Blanco** | Navy para sidebar, headers de módulo, textos pesados. Blanco/crema para fondos, cards, espacios | Estructura visual dominante |
+| **30% — Cyan** | Barras de progreso, nodos del path, badges, acentos de cards, hover states | Interactividad y frescura |
+| **10% — Naranja** | CTAs principales ("Empezar"), nodo activo, XP, notificaciones, momentos de celebración | Puntos focales de acción |
 
-**Eliminar** lines 217-225 (las dos divs de linea vertical absoluta).
+## Cambios en `src/index.css`
 
-**Reemplazar PathNodeComponent** con version mejorada:
-- Nodos `w-16 h-16` (antes `w-14 h-14`)
-- Posicion X calculada con `Math.sin(i * 0.7) * 90` para efecto serpentina
-- Nodo activo muestra label "EMPEZAR" debajo con efecto pulse-glow
-- Nodos bloqueados con `opacity-50`
+### Variables CSS (light mode)
+- `--primary`: Cambiar de `21 100% 60%` (naranja) → mantener naranja pero solo para CTAs
+- **Nuevo** `--navy`: `210 52% 24%` (#1E3A5F) — para headers, módulos, sidebar
+- `--accent`: Cambiar de `192 100% 95%` (cyan claro) → `192 100% 50%` (#00D4FF) — cyan vibrante
+- `--accent-foreground`: `0 0% 100%` (blanco sobre cyan)
+- `--gradient-primary`: Naranja sólido (se usa poco, solo CTAs)
+- **Nuevo** `--gradient-navy`: `linear-gradient(135deg, hsl(210 52% 24%), hsl(210 52% 18%))` — para module headers
+- **Nuevo** `--gradient-cyan`: `linear-gradient(135deg, hsl(192 100% 50%), hsl(192 100% 42%))` — para barras de progreso
+- `--gradient-hero`: Navy a cyan (en vez de naranja a cyan)
 
-**Agregar conectores SVG curvos:**
-- Un `<svg>` overlay absoluto sobre el contenedor del path
-- Para cada par de nodos consecutivos, dibujar un `<path>` con curva bezier
-- Color: `hsl(var(--success))` si ambos completados, `hsl(var(--border))` si no
-- Calcular coordenadas Y basadas en spacing entre nodos (~80px cada uno)
+### Variables CSS (dark mode)
+- Ajustar `--accent` a cyan desaturado para dark mode
+- Navy se aclara ligeramente para contraste
 
-**Agregar Kibbo junto al nodo activo:**
-- Importar `KibboExpression` 
-- Renderizar al lado opuesto del zigzag del nodo activo
-- Expresion: `determined` por defecto, `celebrating` si modulo completado, `thumbsup` si progreso >50%
-- Speech bubble opcional con texto motivacional
+### Nuevas utility classes
+- `.gradient-navy` — background navy gradient
+- `.gradient-cyan` — background cyan gradient
+- `.bg-navy` — solid navy background
 
-**Mejorar banners de modulo:**
-- Modulo completado: card con gradiente verde, icono Trophy animado, XP del modulo, Kibbo celebrating
-- Siguiente modulo: card con gradiente primary, titulo y descripcion del modulo
-- Reemplazar el simple `<span>` badge gris actual (lines 242-244)
+## Cambios en `tailwind.config.ts`
 
-**Completion crown** al final se mantiene pero se agranda y agrega Kibbo celebrating.
-
-### 2. `src/index.css` — Agregar animacion pulse-glow
-
-```css
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4); }
-  50% { box-shadow: 0 0 0 12px hsl(var(--primary) / 0); }
-}
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
+Agregar colores `navy` al theme extend:
+```
+navy: {
+  DEFAULT: "hsl(var(--navy))",
+  foreground: "hsl(var(--navy-foreground))",
 }
 ```
 
-## Arquitectura del zigzag
+## Cambios en `src/pages/CourseView.tsx`
 
-```text
-  Modulo 1 Header
-       ○          ← sin(0) = center
-      / 
-     ○             ← sin(0.7) = right
-      \
-       ○          ← sin(1.4) = center-left
-      /
-     ○  🦊        ← active node + Kibbo
-  
-  ══ Modulo 2 ══  ← banner completado / nuevo modulo
-       ○
-      ...
-```
+Aplicar la jerarquía de colores al path:
 
-Cada nodo se posiciona con `style={{ marginLeft: calc(50% + xOffset) }}` y los conectores SVG se calculan entre los centros de nodos consecutivos.
+1. **CourseHeader** (line 44): Cambiar `gradient-primary` → `gradient-navy` (navy como fondo dominante, 60%)
+2. **Progress bar** dentro del header (line 63): Cambiar `bg-primary-foreground` → cyan (`bg-accent`)
+3. **ModuleHeader completado** (line 86): Mantener success green
+4. **ModuleHeader activo** (line 108): Cambiar `gradient-primary` → `gradient-navy` (navy, 60%)
+5. **Nodo activo** (line 146): Cambiar `gradient-primary` → `gradient-primary` (naranja, 10% — punto focal CTA)
+6. **Nodos completados** (line 144): Cambiar `bg-success` → cyan con check (`bg-accent`)
+7. **Label "Empezar"** (line 170): Mantener `bg-primary` naranja (CTA, 10%)
+8. **Connectors SVG done** (line 236): Cambiar `--success` → `--accent` (cyan)
+9. **Crown final** (line 412): Mantener gold/xp
 
-## Archivos
+## Cambios en `src/components/AppSidebar.tsx`
 
-| Archivo | Accion |
+El sidebar ya usa navy (`--sidebar-background: 210 52% 14%`). Solo asegurar que el accent del sidebar use cyan.
+
+## Archivos a modificar
+
+| Archivo | Cambios |
 |---|---|
-| `src/pages/CourseView.tsx` | Reescribir path completo |
-| `src/index.css` | Agregar keyframe pulse-glow |
+| `src/index.css` | Agregar variables `--navy`, `--navy-foreground`, ajustar `--accent` a cyan vibrante, agregar gradientes navy/cyan, utility classes |
+| `tailwind.config.ts` | Agregar color `navy` al theme |
+| `src/pages/CourseView.tsx` | Aplicar 60-30-10: header y módulos navy, progreso y nodos completados cyan, nodo activo naranja |
 
