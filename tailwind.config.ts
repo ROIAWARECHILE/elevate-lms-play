@@ -66,6 +66,10 @@ export default {
           DEFAULT: "hsl(var(--streak))",
           foreground: "hsl(var(--streak-foreground))",
         },
+        navy: {
+          DEFAULT: "hsl(var(--navy))",
+          foreground: "hsl(var(--navy-foreground))",
+        },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",

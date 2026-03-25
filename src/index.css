@@ -128,6 +128,12 @@
   .gradient-primary {
     background: var(--gradient-primary);
   }
+  .gradient-navy {
+    background: var(--gradient-navy);
+  }
+  .gradient-cyan {
+    background: var(--gradient-cyan);
+  }
   .gradient-hero {
     background: var(--gradient-hero);
   }
