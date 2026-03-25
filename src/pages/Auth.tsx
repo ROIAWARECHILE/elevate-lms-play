@@ -44,7 +44,7 @@ export default function Auth() {
           password,
           options: {
             data: { full_name: fullName },
-            emailRedirectTo: APP_URL,
+            emailRedirectTo: `${APP_URL}${redirectTo}`,
           },
         });
         if (error) throw error;
