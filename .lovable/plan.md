@@ -1,93 +1,74 @@
 
 
-# Plan: Fix Organization Creation, Links & RLS Issues
+# Plan: Fix Invitation System & Link Generation
+
+## Current State Analysis
+
+After reviewing the code and network requests, the `APP_URL` constant system is already correctly implemented. All files use `APP_URL` from `src/lib/constants.ts`, and `.env` has `VITE_APP_URL=https://elevate-lms-play.lovable.app`. No custom domain is registered beyond this published URL.
+
+The main issues are in the **invitation/join flow**:
 
 ## Issues Found
 
-### 1. Onboarding: Can't Create Organization (Critical)
-The `Onboarding.tsx` flow does 3 steps: insert company, update profile, upsert admin role. Step 3 fails because `user_roles` has an ALL RLS policy requiring `has_role(auth.uid(), 'admin')`. A new user only has `collaborator` role (from the `handle_new_user` trigger), so they can't insert the `admin` role for themselves. The company gets created but the user is never made admin.
+### 1. JoinCompany Race Condition (Bug)
+`JoinCompany.tsx` fetches the company from Supabase on mount, but the RLS policy `"Anyone can view companies"` is scoped to `TO authenticated`. If the user is not logged in (anon), the query returns nothing, briefly showing "Empresa no encontrada" before redirecting to `/auth`. After login and redirect back, the company query works, but the UX is broken for first-time visitors.
 
-**Fix:** Create a `SECURITY DEFINER` database function `create_company_for_user(name, slug)` that atomically: creates the company, updates the profile's `company_id`, deletes the collaborator role, and inserts the admin role. Called from the client as a single RPC.
+**Fix:** Add an RLS policy allowing `anon` users to SELECT companies (company names/slugs are not sensitive). Also restructure the component to defer the company fetch until auth state is known.
 
-### 2. JoinCompany: Can't Find Company by Slug (Critical)
-The companies SELECT RLS policy is `id = get_user_company_id(auth.uid())` — a user can only see the company they already belong to. A new user trying to join via `/join/acme-corp` can't query the company by slug because they aren't in it yet.
+### 2. JoinCompany Doesn't Assign Collaborator Role on Join
+When a user joins via invite link, only `company_id` is updated on the profile. The `collaborator` role was already assigned by the `handle_new_user` trigger at signup, so this works for new users. But if roles were modified or deleted, there's no guarantee. Best practice: create a `join_company_by_slug` RPC function (SECURITY DEFINER) that atomically updates company_id and ensures the collaborator role exists.
 
-**Fix:** Add a new SELECT RLS policy on `companies` allowing any authenticated user to look up a company by slug: `true` for SELECT (since company names are not sensitive, and users need the slug to join). Alternatively, a more restrictive policy that only allows `get_user_company_id(auth.uid()) IS NULL` users to read.
+### 3. emailRedirectTo Doesn't Preserve Redirect Path
+In `Auth.tsx`, `emailRedirectTo: APP_URL` sends the user to the root after email confirmation. If they were trying to join a company, the redirect context is lost.
 
-### 3. All Links Use `window.location.origin` (Wrong Domain)
-Three places generate links using `window.location.origin`:
-- `AdminSettings.tsx` line 85: invite link display
-- `AdminUsers.tsx` line 92: copy invite link
-- `Auth.tsx` line 44: email redirect URL
-
-In preview mode, this generates `https://id-preview--xxx.lovable.app/join/slug` instead of the published domain `https://elevate-lms-play.lovable.app`. Invite links shared externally won't work.
-
-**Fix:** Create a utility constant `APP_URL` in `src/lib/constants.ts` that uses `import.meta.env.VITE_APP_URL || window.location.origin`. Set `VITE_APP_URL=https://elevate-lms-play.lovable.app` in `.env`. Use this constant in all three files.
-
-### 4. Auth Redirect Ignores `?redirect=` Param
-`JoinCompany.tsx` redirects to `/auth?redirect=/join/slug` but `Auth.tsx` always navigates to `/app` on login (line 25, 29). The redirect param is never read.
-
-**Fix:** Read `searchParams.get("redirect")` in `Auth.tsx` and navigate there instead of hardcoded `/app`.
+**Fix:** Set `emailRedirectTo: \`${APP_URL}${redirectTo}\`` to preserve the intended destination.
 
 ## Implementation
 
 ### Step 1: Database Migration
-Create function and RLS policy:
 ```sql
--- Function to atomically create company + assign admin role
-CREATE OR REPLACE FUNCTION public.create_company_for_user(
-  _name text, _slug text
-) RETURNS uuid
+-- Allow anon users to view companies (for join page before login)
+CREATE POLICY "Anon can view companies"
+  ON public.companies FOR SELECT TO anon
+  USING (true);
+
+-- Atomic join function with role safety
+CREATE OR REPLACE FUNCTION public.join_company_by_slug(_slug text)
+RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
 DECLARE _company_id uuid; _user_id uuid;
 BEGIN
   _user_id := auth.uid();
+  IF _user_id IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
   IF get_user_company_id(_user_id) IS NOT NULL THEN
     RAISE EXCEPTION 'User already belongs to a company';
   END IF;
-  INSERT INTO companies (name, slug) VALUES (_name, _slug)
-    RETURNING id INTO _company_id;
+  SELECT id INTO _company_id FROM companies WHERE slug = _slug;
+  IF _company_id IS NULL THEN RAISE EXCEPTION 'Company not found'; END IF;
   UPDATE profiles SET company_id = _company_id WHERE id = _user_id;
-  DELETE FROM user_roles WHERE user_id = _user_id;
-  INSERT INTO user_roles (user_id, role) VALUES (_user_id, 'admin');
+  -- Ensure collaborator role exists
+  INSERT INTO user_roles (user_id, role)
+  VALUES (_user_id, 'collaborator')
+  ON CONFLICT (user_id, role) DO NOTHING;
   RETURN _company_id;
 END; $$;
-
--- Allow any authenticated user to view companies (for join flow)
-CREATE POLICY "Anyone can view companies by slug"
-  ON public.companies FOR SELECT TO authenticated
-  USING (true);
-```
-Also drop the old restrictive SELECT policy `Users can view own company` since the new one is broader.
-
-### Step 2: Create `src/lib/constants.ts`
-```ts
-export const APP_URL = import.meta.env.VITE_APP_URL || window.location.origin;
 ```
 
-### Step 3: Update `.env`
-Add `VITE_APP_URL=https://elevate-lms-play.lovable.app`
+### Step 2: Update `JoinCompany.tsx`
+- Defer company fetch until auth state resolves
+- Use `join_company_by_slug` RPC instead of raw profile update
+- Show company info to unauthenticated users (now works with anon policy)
+- Better error handling and loading states
 
-### Step 4: Update `Onboarding.tsx`
-Replace the 3-step insert/update/upsert with a single `supabase.rpc('create_company_for_user', { _name, _slug })`.
-
-### Step 5: Update `Auth.tsx`
-Read `redirect` search param. On auth state change or session check, navigate to `redirect || "/app"`.
-
-### Step 6: Update link generation
-Replace `window.location.origin` with `APP_URL` in `AdminSettings.tsx`, `AdminUsers.tsx`, and `Auth.tsx` (emailRedirectTo).
+### Step 3: Update `Auth.tsx`
+- Set `emailRedirectTo: \`${APP_URL}${redirectTo}\`` to preserve join redirect
 
 ## Files
 
 | File | Action |
 |---|---|
-| Migration SQL | Create function + RLS policy |
-| `src/lib/constants.ts` | Create — APP_URL constant |
-| `.env` | Add VITE_APP_URL |
-| `src/pages/Onboarding.tsx` | Use RPC instead of 3-step flow |
-| `src/pages/Auth.tsx` | Handle redirect param |
-| `src/pages/admin/AdminSettings.tsx` | Use APP_URL |
-| `src/pages/admin/AdminUsers.tsx` | Use APP_URL |
-| `src/pages/JoinCompany.tsx` | Minor — works now with new RLS |
+| Migration SQL | Create anon policy + join_company_by_slug function |
+| `src/pages/JoinCompany.tsx` | Refactor — use RPC, fix race condition |
+| `src/pages/Auth.tsx` | Fix emailRedirectTo to include redirect path |
 
