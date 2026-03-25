@@ -47,8 +47,8 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
         {course?.level === "beginner" ? "Básico" : course?.level === "intermediate" ? "Intermedio" : "Avanzado"}
       </Badge>
       <h1 className="text-2xl md:text-3xl font-bold mb-2">{course?.title}</h1>
-      <p className="text-primary-foreground/80 mb-4 text-sm md:text-base">{course?.description}</p>
-      <div className="flex items-center gap-4 text-sm text-primary-foreground/70">
+      <p className="text-navy-foreground/80 mb-4 text-sm md:text-base">{course?.description}</p>
+      <div className="flex items-center gap-4 text-sm text-navy-foreground/70">
         <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {course?.estimated_duration_minutes}min</span>
         <span className="flex items-center gap-1"><Zap className="w-4 h-4" /> {course?.xp_reward} XP</span>
         <span className="flex items-center gap-1"><BookOpen className="w-4 h-4" /> {totalLessons} lecciones</span>
