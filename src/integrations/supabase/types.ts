@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          invite_code: string
           logo_url: string | null
           name: string
           primary_color: string | null
@@ -27,6 +28,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          invite_code?: string
           logo_url?: string | null
           name: string
           primary_color?: string | null
@@ -36,6 +38,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          invite_code?: string
           logo_url?: string | null
           name?: string
           primary_color?: string | null
@@ -192,6 +195,7 @@ export type Database = {
           last_activity_date: string | null
           level: number
           longest_streak: number
+          status: string
           updated_at: string
           xp_total: number
         }
@@ -207,6 +211,7 @@ export type Database = {
           last_activity_date?: string | null
           level?: number
           longest_streak?: number
+          status?: string
           updated_at?: string
           xp_total?: number
         }
@@ -222,6 +227,7 @@ export type Database = {
           last_activity_date?: string | null
           level?: number
           longest_streak?: number
+          status?: string
           updated_at?: string
           xp_total?: number
         }
@@ -456,6 +462,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_user: { Args: { _target_user_id: string }; Returns: undefined }
       create_company_for_user: {
         Args: { _name: string; _slug: string }
         Returns: string
@@ -468,7 +475,9 @@ export type Database = {
         }
         Returns: boolean
       }
+      join_company_by_code: { Args: { _code: string }; Returns: string }
       join_company_by_slug: { Args: { _slug: string }; Returns: string }
+      reject_user: { Args: { _target_user_id: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "collaborator"
