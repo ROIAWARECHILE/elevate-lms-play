@@ -112,7 +112,7 @@ function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward }
         <span className="text-xs font-semibold uppercase tracking-wide">Unidad {moduleIndex + 1}</span>
       </div>
       <p className="text-sm font-bold">{title}</p>
-      {description && <p className="text-xs text-primary-foreground/70 mt-0.5">{description}</p>}
+      {description && <p className="text-xs text-navy-foreground/70 mt-0.5">{description}</p>}
     </motion.div>
   );
 }
