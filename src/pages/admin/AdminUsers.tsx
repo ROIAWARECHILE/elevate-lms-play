@@ -5,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Copy, CheckCircle2, Shield, User, Loader2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Users, Copy, CheckCircle2, Shield, User, Loader2, Clock, XCircle, KeyRound } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { APP_URL } from "@/lib/constants";
 
 interface CompanyUser {
   id: string;
@@ -17,6 +17,7 @@ interface CompanyUser {
   current_streak: number;
   last_activity_date: string | null;
   role: string;
+  status: string;
 }
 
 export default function AdminUsers() {
@@ -26,6 +27,8 @@ export default function AdminUsers() {
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [togglingRole, setTogglingRole] = useState<string | null>(null);
+  const [approvingUser, setApprovingUser] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!profile?.company_id) return;
@@ -36,7 +39,7 @@ export default function AdminUsers() {
     const [profilesRes, companyRes] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id, full_name, xp_total, level, current_streak, last_activity_date")
+        .select("id, full_name, xp_total, level, current_streak, last_activity_date, status")
         .eq("company_id", profile!.company_id!),
       supabase.from("companies").select("*").eq("id", profile!.company_id!).single(),
     ]);
@@ -44,7 +47,6 @@ export default function AdminUsers() {
     if (companyRes.data) setCompany(companyRes.data);
 
     if (profilesRes.data) {
-      // Fetch roles for all users
       const userIds = profilesRes.data.map((p) => p.id);
       const { data: rolesData } = await supabase
         .from("user_roles")
@@ -53,7 +55,6 @@ export default function AdminUsers() {
 
       const rolesMap: Record<string, string> = {};
       rolesData?.forEach((r: any) => {
-        // If user has admin role, mark as admin
         if (r.role === "admin") rolesMap[r.user_id] = "admin";
         else if (!rolesMap[r.user_id]) rolesMap[r.user_id] = r.role;
       });
@@ -62,6 +63,7 @@ export default function AdminUsers() {
         profilesRes.data.map((p) => ({
           ...p,
           role: rolesMap[p.id] || "collaborator",
+          status: (p as any).status || "active",
         }))
       );
     }
@@ -71,12 +73,9 @@ export default function AdminUsers() {
   const toggleRole = async (userId: string, currentRole: string) => {
     setTogglingRole(userId);
     const newRole = currentRole === "admin" ? "collaborator" : "admin";
-
     try {
-      // Delete existing role and insert new one
       await supabase.from("user_roles").delete().eq("user_id", userId);
       await supabase.from("user_roles").insert({ user_id: userId, role: newRole as any });
-      
       setUsers((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u))
       );
@@ -88,12 +87,46 @@ export default function AdminUsers() {
     }
   };
 
-  const copyInviteLink = () => {
-    if (!company) return;
-    const link = `${APP_URL}/join/${company.slug}`;
-    navigator.clipboard.writeText(link);
-    toast({ title: "Enlace copiado", description: "Comparte este enlace con tu equipo" });
+  const approveUser = async (userId: string) => {
+    setApprovingUser(userId);
+    try {
+      const { error } = await supabase.rpc("approve_user", { _target_user_id: userId });
+      if (error) throw error;
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, status: "active" } : u))
+      );
+      toast({ title: "Usuario aprobado" });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setApprovingUser(null);
+    }
   };
+
+  const rejectUser = async (userId: string) => {
+    setApprovingUser(userId);
+    try {
+      const { error } = await supabase.rpc("reject_user", { _target_user_id: userId });
+      if (error) throw error;
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+      toast({ title: "Usuario rechazado" });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setApprovingUser(null);
+    }
+  };
+
+  const copyInviteCode = () => {
+    if (!company?.invite_code) return;
+    navigator.clipboard.writeText(company.invite_code);
+    setCopied(true);
+    toast({ title: "Código copiado", description: "Comparte este código con tu equipo" });
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const activeUsers = users.filter((u) => u.status === "active");
+  const pendingUsers = users.filter((u) => u.status === "pending");
 
   if (loading) {
     return (
@@ -107,69 +140,132 @@ export default function AdminUsers() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Usuarios</h1>
-        <Button onClick={copyInviteLink} variant="outline" className="gap-2">
-          <Copy className="w-4 h-4" /> Copiar enlace de invitación
+        <Button onClick={copyInviteCode} variant="outline" className="gap-2">
+          {copied ? <CheckCircle2 className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />}
+          {copied ? "¡Copiado!" : `Código: ${company?.invite_code || "..."}`}
         </Button>
       </div>
 
-      <Card className="shadow-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="w-5 h-5 text-primary" />
-            Equipo ({users.length} miembros)
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nombre</TableHead>
-                <TableHead>Rol</TableHead>
-                <TableHead>Nivel</TableHead>
-                <TableHead>XP</TableHead>
-                <TableHead>Racha</TableHead>
-                <TableHead>Última actividad</TableHead>
-                <TableHead>Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="font-medium">{u.full_name || "Sin nombre"}</TableCell>
-                  <TableCell>
-                    <Badge variant={u.role === "admin" ? "default" : "secondary"} className="gap-1">
-                      {u.role === "admin" ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
-                      {u.role === "admin" ? "Admin" : "Colaborador"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{u.level}</TableCell>
-                  <TableCell>{u.xp_total}</TableCell>
-                  <TableCell>{u.current_streak} 🔥</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {u.last_activity_date || "Nunca"}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={togglingRole === u.id}
-                      onClick={() => toggleRole(u.id, u.role)}
-                    >
-                      {togglingRole === u.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : u.role === "admin" ? (
-                        "Hacer colaborador"
-                      ) : (
-                        "Hacer admin"
-                      )}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="active">
+        <TabsList>
+          <TabsTrigger value="active" className="gap-2">
+            <Users className="w-4 h-4" /> Activos ({activeUsers.length})
+          </TabsTrigger>
+          <TabsTrigger value="pending" className="gap-2">
+            <Clock className="w-4 h-4" /> Pendientes ({pendingUsers.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="active">
+          <Card className="shadow-card">
+            <CardContent className="pt-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead>Rol</TableHead>
+                    <TableHead>Nivel</TableHead>
+                    <TableHead>XP</TableHead>
+                    <TableHead>Racha</TableHead>
+                    <TableHead>Última actividad</TableHead>
+                    <TableHead>Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activeUsers.map((u) => (
+                    <TableRow key={u.id}>
+                      <TableCell className="font-medium">{u.full_name || "Sin nombre"}</TableCell>
+                      <TableCell>
+                        <Badge variant={u.role === "admin" ? "default" : "secondary"} className="gap-1">
+                          {u.role === "admin" ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
+                          {u.role === "admin" ? "Admin" : "Colaborador"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{u.level}</TableCell>
+                      <TableCell>{u.xp_total}</TableCell>
+                      <TableCell>{u.current_streak} 🔥</TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {u.last_activity_date || "Nunca"}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={togglingRole === u.id}
+                          onClick={() => toggleRole(u.id, u.role)}
+                        >
+                          {togglingRole === u.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : u.role === "admin" ? (
+                            "Hacer colaborador"
+                          ) : (
+                            "Hacer admin"
+                          )}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="pending">
+          <Card className="shadow-card">
+            <CardContent className="pt-6">
+              {pendingUsers.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">
+                  No hay solicitudes pendientes
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead>Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingUsers.map((u) => (
+                      <TableRow key={u.id}>
+                        <TableCell className="font-medium">{u.full_name || "Sin nombre"}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => approveUser(u.id)}
+                              disabled={approvingUser === u.id}
+                              className="gap-1"
+                            >
+                              {approvingUser === u.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="w-4 h-4" />
+                              )}
+                              Aprobar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => rejectUser(u.id)}
+                              disabled={approvingUser === u.id}
+                              className="gap-1"
+                            >
+                              <XCircle className="w-4 h-4" />
+                              Rechazar
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

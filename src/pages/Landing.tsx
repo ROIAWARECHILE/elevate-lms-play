@@ -289,7 +289,7 @@ export default function Landing() {
               </div>
               <h3 className="text-xl font-bold mb-3">Para Administradores</h3>
               <ul className="space-y-3 text-muted-foreground text-sm">
-                {["Crea cursos con lecciones y quizzes", "Invita colaboradores con un link", "Visualiza analytics en tiempo real", "Gestiona roles y equipos"].map(t => (
+                {["Crea cursos con lecciones y quizzes", "Invita colaboradores con un código", "Visualiza analytics en tiempo real", "Gestiona roles y equipos"].map(t => (
                   <li key={t} className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-success mt-0.5 shrink-0" />{t}
                   </li>

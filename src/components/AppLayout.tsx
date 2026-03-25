@@ -4,11 +4,13 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { BottomTabBar } from "@/components/BottomTabBar";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Loader2 } from "lucide-react";
+import { Loader2, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 export function AppLayout() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, isPending, signOut } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
 
@@ -26,6 +28,33 @@ export function AppLayout() {
 
   if (!loading && profile && !profile.company_id) {
     return <Navigate to="/onboarding" replace />;
+  }
+
+  // Show pending approval screen
+  if (isPending) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="absolute inset-0 gradient-hero opacity-5" />
+        <Card className="w-full max-w-md shadow-elevated relative z-10">
+          <CardHeader className="text-center">
+            <div className="flex justify-center mb-4">
+              <div className="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center">
+                <Clock className="w-8 h-8 text-warning" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl">Esperando aprobación</CardTitle>
+            <CardDescription>
+              Tu solicitud está pendiente de aprobación por el administrador de la empresa. Te notificaremos cuando tengas acceso.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={signOut} variant="outline" className="w-full">
+              Cerrar sesión
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
