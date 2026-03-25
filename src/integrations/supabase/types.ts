@@ -468,6 +468,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      join_company_by_slug: { Args: { _slug: string }; Returns: string }
     }
     Enums: {
       app_role: "admin" | "collaborator"
