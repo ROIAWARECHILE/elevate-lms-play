@@ -41,14 +41,14 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="gradient-primary rounded-2xl p-6 md:p-8 text-primary-foreground"
+      className="gradient-navy rounded-2xl p-6 md:p-8 text-navy-foreground"
     >
       <Badge variant="secondary" className="mb-3">
         {course?.level === "beginner" ? "Básico" : course?.level === "intermediate" ? "Intermedio" : "Avanzado"}
       </Badge>
       <h1 className="text-2xl md:text-3xl font-bold mb-2">{course?.title}</h1>
-      <p className="text-primary-foreground/80 mb-4 text-sm md:text-base">{course?.description}</p>
-      <div className="flex items-center gap-4 text-sm text-primary-foreground/70">
+      <p className="text-navy-foreground/80 mb-4 text-sm md:text-base">{course?.description}</p>
+      <div className="flex items-center gap-4 text-sm text-navy-foreground/70">
         <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {course?.estimated_duration_minutes}min</span>
         <span className="flex items-center gap-1"><Zap className="w-4 h-4" /> {course?.xp_reward} XP</span>
         <span className="flex items-center gap-1"><BookOpen className="w-4 h-4" /> {totalLessons} lecciones</span>
@@ -58,9 +58,9 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
           <span>Progreso</span>
           <span>{Math.round(progressPct)}%</span>
         </div>
-        <div className="h-2 bg-primary-foreground/20 rounded-full overflow-hidden">
+        <div className="h-2 bg-navy-foreground/20 rounded-full overflow-hidden">
           <motion.div
-            className="h-full bg-primary-foreground rounded-full"
+            className="h-full bg-accent rounded-full"
             initial={{ width: 0 }}
             animate={{ width: `${progressPct}%` }}
             transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
@@ -105,14 +105,14 @@ function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward }
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="mx-auto max-w-xs rounded-2xl gradient-primary p-4 text-center text-primary-foreground"
+      className="mx-auto max-w-xs rounded-2xl gradient-navy p-4 text-center text-navy-foreground"
     >
       <div className="flex items-center justify-center gap-2 mb-1">
         <Star className="w-4 h-4" />
         <span className="text-xs font-semibold uppercase tracking-wide">Unidad {moduleIndex + 1}</span>
       </div>
       <p className="text-sm font-bold">{title}</p>
-      {description && <p className="text-xs text-primary-foreground/70 mt-0.5">{description}</p>}
+      {description && <p className="text-xs text-navy-foreground/70 mt-0.5">{description}</p>}
     </motion.div>
   );
 }
@@ -138,19 +138,19 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
   ) : (
     <RouterLink to={node.link!} className="flex flex-col items-center gap-1.5 group">
       <div className="relative">
-        <motion.div
-          className={`w-16 h-16 rounded-full flex items-center justify-center border-4 transition-all ${
-            node.done
-              ? "bg-success border-success/30"
-              : isActive
-              ? "gradient-primary border-primary/30 shadow-primary animate-pulse-glow"
-              : "bg-card border-border group-hover:border-primary/40"
-          }`}
+          <motion.div
+            className={`w-16 h-16 rounded-full flex items-center justify-center border-4 transition-all ${
+              node.done
+                ? "bg-accent border-accent/30"
+                : isActive
+                ? "gradient-primary border-primary/30 shadow-primary animate-pulse-glow"
+                : "bg-card border-border group-hover:border-accent/40"
+            }`}
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
         >
           {node.done ? (
-            <CheckCircle2 className="w-7 h-7 text-success-foreground" />
+            <CheckCircle2 className="w-7 h-7 text-accent-foreground" />
           ) : node.type === "quiz" ? (
             <Brain className={`w-7 h-7 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
           ) : (
@@ -159,7 +159,7 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
         </motion.div>
       </div>
       <span className={`text-[11px] max-w-[100px] text-center truncate font-medium ${
-        node.done ? "text-success" : isActive ? "text-primary font-bold" : "text-muted-foreground"
+        node.done ? "text-accent" : isActive ? "text-primary font-bold" : "text-muted-foreground"
       }`}>
         {node.title}
       </span>
@@ -233,7 +233,7 @@ function SvgConnectors({ nodes, nodeSpacing }: { nodes: PathNode[]; nodeSpacing:
           <motion.path
             key={`connector-${i}`}
             d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
-            stroke={bothDone ? "hsl(var(--success))" : "hsl(var(--border))"}
+            stroke={bothDone ? "hsl(var(--accent))" : "hsl(var(--border))"}
             strokeWidth={bothDone ? 3 : 2}
             fill="none"
             strokeLinecap="round"

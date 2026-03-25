@@ -24,8 +24,11 @@
     --muted: 30 12% 94%;
     --muted-foreground: 215 10% 46%;
 
-    --accent: 192 100% 95%;
-    --accent-foreground: 192 100% 30%;
+    --accent: 192 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --navy: 210 52% 24%;
+    --navy-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
@@ -58,8 +61,10 @@
     --sidebar-ring: 21 100% 60%;
 
     --gradient-primary: linear-gradient(135deg, hsl(24 100% 60%), hsl(24 100% 52%));
-    --gradient-hero: linear-gradient(135deg, hsl(24 100% 58%), hsl(197 100% 50%));
-    --gradient-card: linear-gradient(135deg, hsl(24 60% 97%), hsl(197 60% 97%));
+    --gradient-navy: linear-gradient(135deg, hsl(210 52% 24%), hsl(210 52% 18%));
+    --gradient-cyan: linear-gradient(135deg, hsl(192 100% 50%), hsl(192 100% 42%));
+    --gradient-hero: linear-gradient(135deg, hsl(210 52% 24%), hsl(192 100% 50%));
+    --gradient-card: linear-gradient(135deg, hsl(210 20% 97%), hsl(192 40% 97%));
     --shadow-primary: 0 4px 24px -4px hsl(21 100% 60% / 0.3);
     --shadow-card: 0 1px 3px 0 hsl(0 0% 0% / 0.04), 0 1px 2px -1px hsl(0 0% 0% / 0.04);
     --shadow-elevated: 0 10px 40px -10px hsl(0 0% 0% / 0.08);
@@ -84,8 +89,11 @@
     --muted: 215 20% 15%;
     --muted-foreground: 210 10% 55%;
 
-    --accent: 192 50% 15%;
-    --accent-foreground: 192 80% 70%;
+    --accent: 192 80% 40%;
+    --accent-foreground: 0 0% 100%;
+
+    --navy: 210 40% 30%;
+    --navy-foreground: 0 0% 100%;
 
     --destructive: 0 62% 40%;
     --destructive-foreground: 0 0% 100%;
@@ -119,6 +127,12 @@
 @layer utilities {
   .gradient-primary {
     background: var(--gradient-primary);
+  }
+  .gradient-navy {
+    background: var(--gradient-navy);
+  }
+  .gradient-cyan {
+    background: var(--gradient-cyan);
   }
   .gradient-hero {
     background: var(--gradient-hero);
