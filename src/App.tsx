@@ -17,6 +17,7 @@ import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
 import CreateCourse from "./pages/admin/CreateCourse";
+import GenerateCourse from "./pages/admin/GenerateCourse";
 import EditCourse from "./pages/admin/EditCourse";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
