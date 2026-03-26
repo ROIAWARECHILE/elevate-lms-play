@@ -1,77 +1,105 @@
 
 
-# Plan: Rediseño de Colores con Regla 60-30-10
+# Plan: Sistema de Generación de Cursos con OpenAI API
 
-## Análisis de la imagen
+## Resumen
 
-La imagen muestra 4 colores clave de la marca Kibbo:
-- **Naranja (#FF6B35)** — CTAs principales (GET STARTED, Claim)
-- **Cyan (#00D4FF)** — Elementos interactivos (CONTINUE LESSON, barras de progreso)
-- **Navy (#1E3A5F)** — Estructura y peso visual (VIEW PROGRESS, streak badge, level up banner)
-- **Blanco/Crema** — Fondos y espacios
+Crear un sistema donde el admin sube PDFs, imágenes e instrucciones, y una edge function usa la **API de OpenAI directamente** (no Lovable AI) para generar cursos completos con módulos, lecciones y quizzes.
 
-## Regla 60-30-10 aplicada
+## Requisito previo: API Key de OpenAI
 
-| Proporción | Color | Uso |
-|---|---|---|
-| **60% — Navy + Blanco** | Navy para sidebar, headers de módulo, textos pesados. Blanco/crema para fondos, cards, espacios | Estructura visual dominante |
-| **30% — Cyan** | Barras de progreso, nodos del path, badges, acentos de cards, hover states | Interactividad y frescura |
-| **10% — Naranja** | CTAs principales ("Empezar"), nodo activo, XP, notificaciones, momentos de celebración | Puntos focales de acción |
+Se necesita agregar el secret `OPENAI_API_KEY` al proyecto. El usuario debe obtenerlo desde [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
 
-## Cambios en `src/index.css`
+## Arquitectura
 
-### Variables CSS (light mode)
-- `--primary`: Cambiar de `21 100% 60%` (naranja) → mantener naranja pero solo para CTAs
-- **Nuevo** `--navy`: `210 52% 24%` (#1E3A5F) — para headers, módulos, sidebar
-- `--accent`: Cambiar de `192 100% 95%` (cyan claro) → `192 100% 50%` (#00D4FF) — cyan vibrante
-- `--accent-foreground`: `0 0% 100%` (blanco sobre cyan)
-- `--gradient-primary`: Naranja sólido (se usa poco, solo CTAs)
-- **Nuevo** `--gradient-navy`: `linear-gradient(135deg, hsl(210 52% 24%), hsl(210 52% 18%))` — para module headers
-- **Nuevo** `--gradient-cyan`: `linear-gradient(135deg, hsl(192 100% 50%), hsl(192 100% 42%))` — para barras de progreso
-- `--gradient-hero`: Navy a cyan (en vez de naranja a cyan)
-
-### Variables CSS (dark mode)
-- Ajustar `--accent` a cyan desaturado para dark mode
-- Navy se aclara ligeramente para contraste
-
-### Nuevas utility classes
-- `.gradient-navy` — background navy gradient
-- `.gradient-cyan` — background cyan gradient
-- `.bg-navy` — solid navy background
-
-## Cambios en `tailwind.config.ts`
-
-Agregar colores `navy` al theme extend:
-```
-navy: {
-  DEFAULT: "hsl(var(--navy))",
-  foreground: "hsl(var(--navy-foreground))",
-}
+```text
+Admin UI (upload PDF + instrucciones)
+        │
+        ▼
+Edge Function: generate-course
+  1. Recibe PDF (base64), instrucciones, imágenes
+  2. Envía a OpenAI API (gpt-4o) con tool calling
+  3. Recibe estructura JSON del curso
+  4. Inserta en Supabase (courses → modules → lessons → quizzes → questions)
+  5. Retorna courseId
+        │
+        ▼
+Redirige a EditCourse para revisar/ajustar
 ```
 
-## Cambios en `src/pages/CourseView.tsx`
+## Cambios
 
-Aplicar la jerarquía de colores al path:
+### 1. Secret: `OPENAI_API_KEY`
 
-1. **CourseHeader** (line 44): Cambiar `gradient-primary` → `gradient-navy` (navy como fondo dominante, 60%)
-2. **Progress bar** dentro del header (line 63): Cambiar `bg-primary-foreground` → cyan (`bg-accent`)
-3. **ModuleHeader completado** (line 86): Mantener success green
-4. **ModuleHeader activo** (line 108): Cambiar `gradient-primary` → `gradient-navy` (navy, 60%)
-5. **Nodo activo** (line 146): Cambiar `gradient-primary` → `gradient-primary` (naranja, 10% — punto focal CTA)
-6. **Nodos completados** (line 144): Cambiar `bg-success` → cyan con check (`bg-accent`)
-7. **Label "Empezar"** (line 170): Mantener `bg-primary` naranja (CTA, 10%)
-8. **Connectors SVG done** (line 236): Cambiar `--success` → `--accent` (cyan)
-9. **Crown final** (line 412): Mantener gold/xp
+Solicitar al usuario su API key de OpenAI y guardarla como secret del proyecto.
 
-## Cambios en `src/components/AppSidebar.tsx`
+### 2. Edge Function `generate-course`
 
-El sidebar ya usa navy (`--sidebar-background: 210 52% 14%`). Solo asegurar que el accent del sidebar use cyan.
+**`supabase/functions/generate-course/index.ts`**
 
-## Archivos a modificar
+- Recibe: `{ title, instructions, level, pdfBase64?, imageBase64s?, companyId, userId }`
+- Llama a `https://api.openai.com/v1/chat/completions` con:
+  - Modelo: `gpt-4o` (soporta PDFs e imágenes como input multimodal)
+  - **Tool calling** para obtener estructura JSON:
+    ```json
+    {
+      "name": "generate_course_structure",
+      "parameters": {
+        "modules": [{
+          "title": "...",
+          "description": "...",
+          "lessons": [{
+            "title": "...",
+            "content_blocks": [{ "type": "heading|paragraph", "text": "..." }]
+          }],
+          "quiz": {
+            "questions": [{
+              "question_text": "...",
+              "question_type": "multiple_choice",
+              "options": ["A", "B", "C", "D"],
+              "correct_answer": "A"
+            }]
+          }
+        }]
+      }
+    }
+    ```
+- PDFs e imágenes se envían como contenido multimodal (base64 en mensajes)
+- Inserta en cascada usando `SUPABASE_SERVICE_ROLE_KEY`
+- Maneja errores de rate limit (429) y quota (402)
 
-| Archivo | Cambios |
+### 3. Nueva página `src/pages/admin/GenerateCourse.tsx`
+
+- Campo de título del curso
+- Textarea de instrucciones al AI
+- Selector de nivel (básico/intermedio/avanzado)
+- Dropzone para PDF(s) — convierte a base64 en cliente
+- Dropzone para imágenes (contexto adicional)
+- Botón "Generar con IA" con estado de carga
+- Al completar, redirige a `EditCourse`
+
+### 4. Ruta en `App.tsx`
+
+Agregar `<Route path="admin/courses/generate" element={<GenerateCourse />} />`
+
+### 5. Botón en `AdminCourses.tsx`
+
+Agregar botón "Generar con IA" junto a "Crear curso".
+
+## Archivos
+
+| Archivo | Acción |
 |---|---|
-| `src/index.css` | Agregar variables `--navy`, `--navy-foreground`, ajustar `--accent` a cyan vibrante, agregar gradientes navy/cyan, utility classes |
-| `tailwind.config.ts` | Agregar color `navy` al theme |
-| `src/pages/CourseView.tsx` | Aplicar 60-30-10: header y módulos navy, progreso y nodos completados cyan, nodo activo naranja |
+| `supabase/functions/generate-course/index.ts` | Crear — edge function con OpenAI API directa |
+| `src/pages/admin/GenerateCourse.tsx` | Crear — UI de generación |
+| `src/App.tsx` | Agregar ruta |
+| `src/pages/admin/AdminCourses.tsx` | Agregar botón "Generar con IA" |
+
+## Detalles técnicos
+
+- **Modelo**: `gpt-4o` — soporta texto, imágenes y PDFs nativamente, excelente en tool calling
+- **Auth**: `Authorization: Bearer ${OPENAI_API_KEY}` directo a `api.openai.com`
+- **PDF**: Se envía como base64 en el campo `content` del mensaje (gpt-4o soporta archivos)
+- **Tool calling** para JSON estructurado (no parsear markdown)
+- **Límite**: PDFs hasta ~20MB, edge function timeout ~60s
 
