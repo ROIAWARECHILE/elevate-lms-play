@@ -17,6 +17,7 @@ import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
 import CreateCourse from "./pages/admin/CreateCourse";
+import GenerateCourse from "./pages/admin/GenerateCourse";
 import EditCourse from "./pages/admin/EditCourse";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
@@ -54,6 +55,7 @@ const App = () => (
               {/* Admin routes */}
               <Route path="admin/courses" element={<AdminCourses />} />
               <Route path="admin/courses/new" element={<CreateCourse />} />
+              <Route path="admin/courses/generate" element={<GenerateCourse />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />
               <Route path="admin/users" element={<AdminUsers />} />
               <Route path="admin/analytics" element={<AdminAnalytics />} />
