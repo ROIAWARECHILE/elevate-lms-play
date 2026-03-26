@@ -64,11 +64,18 @@ export default function AdminCourses() {
           <h1 className="text-2xl font-bold">Gestionar cursos</h1>
           <p className="text-muted-foreground">Crea y administra los cursos de tu empresa.</p>
         </div>
-        <Button asChild className="gradient-primary shadow-primary">
-          <Link to="/app/admin/courses/new">
-            <PlusCircle className="w-4 h-4 mr-2" /> Crear curso
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link to="/app/admin/courses/new">
+              <PlusCircle className="w-4 h-4 mr-2" /> Crear curso
+            </Link>
+          </Button>
+          <Button asChild className="gradient-primary shadow-primary">
+            <Link to="/app/admin/courses/generate">
+              <Sparkles className="w-4 h-4 mr-2" /> Generar con IA
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {loading ? (

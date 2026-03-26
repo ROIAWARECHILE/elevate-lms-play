@@ -55,6 +55,7 @@ const App = () => (
               {/* Admin routes */}
               <Route path="admin/courses" element={<AdminCourses />} />
               <Route path="admin/courses/new" element={<CreateCourse />} />
+              <Route path="admin/courses/generate" element={<GenerateCourse />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />
               <Route path="admin/users" element={<AdminUsers />} />
               <Route path="admin/analytics" element={<AdminAnalytics />} />
