@@ -13,12 +13,14 @@ import { LevelUpModal } from "@/components/LevelUpModal";
 import { ConfettiEffect } from "@/components/ConfettiEffect";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 import { LessonSkeleton } from "@/components/SkeletonLoaders";
+import { useSoundEffects } from "@/hooks/useSoundEffects";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
   const { user, profile, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { playXp } = useSoundEffects();
   const [lesson, setLesson] = useState<any>(null);
   const [completed, setCompleted] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -98,6 +100,7 @@ export default function LessonView() {
       setCompleted(true);
       setShowXp(true);
       setShowConfetti(true);
+      playXp();
 
       if (result.leveledUp) {
         setNewLevel(result.newLevel);
