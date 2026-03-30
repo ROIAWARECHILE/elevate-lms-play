@@ -126,6 +126,7 @@ export default function LessonView() {
       <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
         <Link
           to={`/app/courses/${courseId}`}
+          state={{ restoreActiveNode: true }}
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4" /> Volver al curso
