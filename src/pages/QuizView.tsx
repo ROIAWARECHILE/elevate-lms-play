@@ -90,9 +90,11 @@ export default function QuizView() {
       const newCount = correctCount + 1;
       setCorrectCount(newCount);
       correctCountRef.current = newCount;
+      playCorrect();
     } else {
       setShakeWrong(true);
       setTimeout(() => setShakeWrong(false), 500);
+      playWrong();
     }
   };
 
