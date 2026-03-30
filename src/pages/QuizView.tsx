@@ -107,11 +107,12 @@ export default function QuizView() {
     } else {
       const finalCorrect = correctCountRef.current;
       setFinished(true);
+      setIsSaving(true);
       const score = Math.round((finalCorrect / questions.length) * 100);
       if (score >= (quiz?.passing_score || 70)) {
         setShowConfetti(true);
       }
-      saveResult(finalCorrect);
+      saveResult(finalCorrect).finally(() => setIsSaving(false));
     }
   };
 
