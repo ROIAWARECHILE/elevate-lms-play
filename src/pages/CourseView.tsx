@@ -285,6 +285,16 @@ export default function CourseView() {
     fetchData();
   }, [courseId, user]);
 
+  // Auto-scroll to active node after data loads
+  useEffect(() => {
+    if (!loading && activeNodeRef.current) {
+      const timer = setTimeout(() => {
+        activeNodeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+
   if (loading) return <CoursePathSkeleton />;
 
   const totalLessons = modules.reduce((sum, m) => sum + m.lessons.length, 0);
