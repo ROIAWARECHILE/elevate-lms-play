@@ -46,6 +46,7 @@ export default function QuizView() {
   const [newLevel, setNewLevel] = useState(1);
   const [showConfetti, setShowConfetti] = useState(false);
   const [shakeWrong, setShakeWrong] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const correctCountRef = useRef(0);
 
   useEffect(() => {
@@ -106,11 +107,12 @@ export default function QuizView() {
     } else {
       const finalCorrect = correctCountRef.current;
       setFinished(true);
+      setIsSaving(true);
       const score = Math.round((finalCorrect / questions.length) * 100);
       if (score >= (quiz?.passing_score || 70)) {
         setShowConfetti(true);
       }
-      saveResult(finalCorrect);
+      saveResult(finalCorrect).finally(() => setIsSaving(false));
     }
   };
 
@@ -247,7 +249,12 @@ export default function QuizView() {
                     <RotateCcw className="w-4 h-4 mr-2" /> Reintentar
                   </Button>
                 )}
-                <Button className="flex-1 gradient-primary" onClick={() => navigate(`/app/courses/${courseId}`)}>
+                <Button
+                  className="flex-1 gradient-primary"
+                  disabled={isSaving}
+                  onClick={() => navigate(`/app/courses/${courseId}`, { state: { restoreActiveNode: true } })}
+                >
+                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                   Volver al curso
                 </Button>
               </div>

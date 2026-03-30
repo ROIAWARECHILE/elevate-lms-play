@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useParams, Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
@@ -250,6 +250,7 @@ function SvgConnectors({ nodes, nodeSpacing }: { nodes: PathNode[]; nodeSpacing:
 export default function CourseView() {
   const { courseId } = useParams();
   const { user } = useAuth();
+  const location = useLocation();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
@@ -285,15 +286,36 @@ export default function CourseView() {
     fetchData();
   }, [courseId, user]);
 
-  // Auto-scroll to active node after data loads
+  // Robust scroll restoration: retry until node is in DOM
+  const scrollToActive = useCallback(() => {
+    let attempts = 0;
+    const maxAttempts = 10;
+    const tryScroll = () => {
+      if (activeNodeRef.current) {
+        activeNodeRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      attempts++;
+      if (attempts < maxAttempts) {
+        requestAnimationFrame(tryScroll);
+      }
+    };
+    requestAnimationFrame(tryScroll);
+  }, []);
+
   useEffect(() => {
-    if (!loading && activeNodeRef.current) {
-      const timer = setTimeout(() => {
-        activeNodeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 400);
+    if (!loading) {
+      // Always scroll to active node when coming back from a lesson/quiz
+      const shouldRestore = (location.state as any)?.restoreActiveNode;
+      if (shouldRestore) {
+        // Clear the state so refresh doesn't re-trigger
+        window.history.replaceState({}, "");
+      }
+      // Scroll to active node on every mount (whether returning or fresh visit)
+      const timer = setTimeout(scrollToActive, 100);
       return () => clearTimeout(timer);
     }
-  }, [loading]);
+  }, [loading, scrollToActive, location.state]);
 
   if (loading) return <CoursePathSkeleton />;
 
