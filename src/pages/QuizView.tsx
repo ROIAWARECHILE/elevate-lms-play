@@ -249,7 +249,12 @@ export default function QuizView() {
                     <RotateCcw className="w-4 h-4 mr-2" /> Reintentar
                   </Button>
                 )}
-                <Button className="flex-1 gradient-primary" onClick={() => navigate(`/app/courses/${courseId}`)}>
+                <Button
+                  className="flex-1 gradient-primary"
+                  disabled={isSaving}
+                  onClick={() => navigate(`/app/courses/${courseId}`, { state: { restoreActiveNode: true } })}
+                >
+                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                   Volver al curso
                 </Button>
               </div>
