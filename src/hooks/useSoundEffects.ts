@@ -6,10 +6,15 @@ import moduleCompleteSound from "@/assets/sounds/completa_modulo.wav";
 
 const playAudio = (src: string, volume = 0.6) => {
   try {
+    console.log("[SoundFX] Playing:", src);
     const audio = new Audio(src);
     audio.volume = volume;
-    audio.play().catch(() => {});
-  } catch {}
+    audio.play().catch((err) => {
+      console.warn("[SoundFX] Play blocked:", err.message);
+    });
+  } catch (err) {
+    console.error("[SoundFX] Error:", err);
+  }
 };
 
 export function useSoundEffects() {
