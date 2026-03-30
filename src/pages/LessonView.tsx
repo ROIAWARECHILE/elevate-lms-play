@@ -100,6 +100,7 @@ export default function LessonView() {
       setCompleted(true);
       setShowXp(true);
       setShowConfetti(true);
+      playXp();
 
       if (result.leveledUp) {
         setNewLevel(result.newLevel);

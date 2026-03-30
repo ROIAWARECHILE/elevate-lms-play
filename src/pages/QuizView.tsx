@@ -159,9 +159,28 @@ export default function QuizView() {
         });
 
         setShowXp(true);
+        playXp();
         if (result.leveledUp) {
           setNewLevel(result.newLevel);
           setTimeout(() => setShowLevelUp(true), 1200);
+        }
+
+        // Check if module is complete (all lessons + quizzes done)
+        const { data: moduleItems } = await supabase
+          .from("quizzes")
+          .select("id")
+          .eq("module_id", quiz?.module_id);
+        const { data: moduleProgress } = await supabase
+          .from("user_progress")
+          .select("quiz_id")
+          .eq("user_id", user.id)
+          .eq("module_id", quiz?.module_id)
+          .eq("completed", true)
+          .not("quiz_id", "is", null);
+        const completedQuizIds = new Set((moduleProgress || []).map(p => p.quiz_id));
+        completedQuizIds.add(quizId!);
+        if (moduleItems && moduleItems.every(q => completedQuizIds.has(q.id))) {
+          setTimeout(() => playModuleComplete(), 800);
         }
 
         await refreshProfile();
