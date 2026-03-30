@@ -20,6 +20,7 @@ export default function LessonView() {
   const { user, profile, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { playXp } = useSoundEffects();
   const [lesson, setLesson] = useState<any>(null);
   const [completed, setCompleted] = useState(false);
   const [completing, setCompleting] = useState(false);

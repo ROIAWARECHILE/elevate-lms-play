@@ -30,6 +30,7 @@ export default function QuizView() {
   const { user, profile, refreshProfile } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { playCorrect, playWrong, playXp, playModuleComplete } = useSoundEffects();
 
   const [quiz, setQuiz] = useState<any>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
