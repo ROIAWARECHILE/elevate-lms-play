@@ -391,7 +391,7 @@ export default function CourseView() {
             const isActive = globalIndex === activeIndex;
 
             return (
-              <div key={`${node.type}-${node.id}`} className="py-3">
+              <div key={`${node.type}-${node.id}`} className="py-3" ref={isActive ? activeNodeRef : undefined}>
                 <PathNodeComponent
                   node={node}
                   isActive={isActive}
