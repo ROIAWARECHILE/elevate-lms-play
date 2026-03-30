@@ -43,6 +43,33 @@ const AuthContext = createContext<AuthContextType>({
   refreshProfile: async () => {},
 });
 
+function getLocalDate(date?: Date): string {
+  const d = date || new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function validateStreak(profile: Profile): Promise<Profile> {
+  const lastActivity = profile.last_activity_date;
+  if (!lastActivity || profile.current_streak === 0) return profile;
+
+  const today = getLocalDate();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = getLocalDate(yesterday);
+
+  if (lastActivity === today || lastActivity === yesterdayStr) {
+    return profile; // streak is still valid
+  }
+
+  // Streak is broken — reset to 0
+  await supabase
+    .from("profiles")
+    .update({ current_streak: 0 })
+    .eq("id", profile.id);
+
+  return { ...profile, current_streak: 0 };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -55,7 +82,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       supabase.from("profiles").select("*").eq("id", userId).single(),
       supabase.from("user_roles").select("role").eq("user_id", userId),
     ]);
-    if (profileRes.data) setProfile(profileRes.data as Profile);
+    if (profileRes.data) {
+      const validated = await validateStreak(profileRes.data as Profile);
+      setProfile(validated);
+    }
     if (rolesRes.data) setRoles(rolesRes.data.map((r: any) => r.role as AppRole));
   };
 
@@ -96,7 +126,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = async () => {
     if (user) {
-      // Small delay to ensure DB writes (e.g. RPC role assignment) are committed
       await new Promise((r) => setTimeout(r, 500));
       await fetchProfile(user.id);
     }
