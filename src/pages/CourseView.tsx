@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -255,6 +255,7 @@ export default function CourseView() {
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
   const [completedQuizzes, setCompletedQuizzes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const activeNodeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -283,6 +284,16 @@ export default function CourseView() {
     };
     fetchData();
   }, [courseId, user]);
+
+  // Auto-scroll to active node after data loads
+  useEffect(() => {
+    if (!loading && activeNodeRef.current) {
+      const timer = setTimeout(() => {
+        activeNodeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
 
   if (loading) return <CoursePathSkeleton />;
 
@@ -390,7 +401,7 @@ export default function CourseView() {
             const isActive = globalIndex === activeIndex;
 
             return (
-              <div key={`${node.type}-${node.id}`} className="py-3">
+              <div key={`${node.type}-${node.id}`} className="py-3" ref={isActive ? activeNodeRef : undefined}>
                 <PathNodeComponent
                   node={node}
                   isActive={isActive}
