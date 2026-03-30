@@ -1,105 +1,49 @@
 
 
-# Plan: Sistema de Generación de Cursos con OpenAI API
+# Plan: Integrar Sonidos de Feedback
 
 ## Resumen
 
-Crear un sistema donde el admin sube PDFs, imágenes e instrucciones, y una edge function usa la **API de OpenAI directamente** (no Lovable AI) para generar cursos completos con módulos, lecciones y quizzes.
+Copiar los 4 archivos de audio a `src/assets/sounds/`, crear un hook `useSoundEffects` para reproducirlos, e integrarlos en QuizView (correcta/incorrecta), LessonView (XP ganado) y el momento de completar módulo.
 
-## Requisito previo: API Key de OpenAI
+## Mapeo de sonidos
 
-Se necesita agregar el secret `OPENAI_API_KEY` al proyecto. El usuario debe obtenerlo desde [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
-
-## Arquitectura
-
-```text
-Admin UI (upload PDF + instrucciones)
-        │
-        ▼
-Edge Function: generate-course
-  1. Recibe PDF (base64), instrucciones, imágenes
-  2. Envía a OpenAI API (gpt-4o) con tool calling
-  3. Recibe estructura JSON del curso
-  4. Inserta en Supabase (courses → modules → lessons → quizzes → questions)
-  5. Retorna courseId
-        │
-        ▼
-Redirige a EditCourse para revisar/ajustar
-```
+| Archivo | Momento | Ubicación |
+|---|---|---|
+| `Respuesta_correcta.wav` | Quiz: respuesta correcta | `QuizView.tsx` → `handleAnswer` cuando acierta |
+| `respuesta_incorrecta.wav` | Quiz: respuesta incorrecta | `QuizView.tsx` → `handleAnswer` cuando falla |
+| `gana_experiencia.wav` | Se gana XP (lección completada, quiz aprobado) | `LessonView.tsx` → `completeLesson` y `QuizView.tsx` → `saveResult` cuando passed |
+| `completa_modulo.wav` | Se completa un módulo completo | `QuizView.tsx` → cuando el quiz aprobado es el último item del módulo |
 
 ## Cambios
 
-### 1. Secret: `OPENAI_API_KEY`
+### 1. Copiar archivos a `src/assets/sounds/`
 
-Solicitar al usuario su API key de OpenAI y guardarla como secret del proyecto.
+Los 4 `.wav` se copian al proyecto para importarlos como módulos ES6.
 
-### 2. Edge Function `generate-course`
+### 2. Crear `src/hooks/useSoundEffects.ts`
 
-**`supabase/functions/generate-course/index.ts`**
+Hook simple que pre-carga los 4 Audio objects y expone funciones: `playCorrect()`, `playWrong()`, `playXp()`, `playModuleComplete()`. Cada función crea/reproduce el audio con volumen controlado.
 
-- Recibe: `{ title, instructions, level, pdfBase64?, imageBase64s?, companyId, userId }`
-- Llama a `https://api.openai.com/v1/chat/completions` con:
-  - Modelo: `gpt-4o` (soporta PDFs e imágenes como input multimodal)
-  - **Tool calling** para obtener estructura JSON:
-    ```json
-    {
-      "name": "generate_course_structure",
-      "parameters": {
-        "modules": [{
-          "title": "...",
-          "description": "...",
-          "lessons": [{
-            "title": "...",
-            "content_blocks": [{ "type": "heading|paragraph", "text": "..." }]
-          }],
-          "quiz": {
-            "questions": [{
-              "question_text": "...",
-              "question_type": "multiple_choice",
-              "options": ["A", "B", "C", "D"],
-              "correct_answer": "A"
-            }]
-          }
-        }]
-      }
-    }
-    ```
-- PDFs e imágenes se envían como contenido multimodal (base64 en mensajes)
-- Inserta en cascada usando `SUPABASE_SERVICE_ROLE_KEY`
-- Maneja errores de rate limit (429) y quota (402)
+### 3. Integrar en `src/pages/QuizView.tsx`
 
-### 3. Nueva página `src/pages/admin/GenerateCourse.tsx`
+- En `handleAnswer`: llamar `playCorrect()` si acierta, `playWrong()` si falla
+- En `saveResult`: llamar `playXp()` cuando passed es true
 
-- Campo de título del curso
-- Textarea de instrucciones al AI
-- Selector de nivel (básico/intermedio/avanzado)
-- Dropzone para PDF(s) — convierte a base64 en cliente
-- Dropzone para imágenes (contexto adicional)
-- Botón "Generar con IA" con estado de carga
-- Al completar, redirige a `EditCourse`
+### 4. Integrar en `src/pages/LessonView.tsx`
 
-### 4. Ruta en `App.tsx`
+- En `completeLesson`: llamar `playXp()` al completar exitosamente
 
-Agregar `<Route path="admin/courses/generate" element={<GenerateCourse />} />`
+### 5. Sonido de módulo completado
 
-### 5. Botón en `AdminCourses.tsx`
-
-Agregar botón "Generar con IA" junto a "Crear curso".
+En `QuizView.tsx`, cuando el quiz se aprueba y es el último del módulo, reproducir `playModuleComplete()`.
 
 ## Archivos
 
 | Archivo | Acción |
 |---|---|
-| `supabase/functions/generate-course/index.ts` | Crear — edge function con OpenAI API directa |
-| `src/pages/admin/GenerateCourse.tsx` | Crear — UI de generación |
-| `src/App.tsx` | Agregar ruta |
-| `src/pages/admin/AdminCourses.tsx` | Agregar botón "Generar con IA" |
-
-## Detalles técnicos
-
-- **Modelo**: `gpt-4o` — soporta texto, imágenes y PDFs nativamente, excelente en tool calling
-- **Auth**: `Authorization: Bearer ${OPENAI_API_KEY}` directo a `api.openai.com`
-- **PDF**: Se envía como base64 en el campo `content` del mensaje (gpt-4o soporta archivos)
-- **Tool calling** para JSON estructurado (no parsear markdown)
-- **Límite**: PDFs hasta ~20MB, edge function timeout ~60s
+| `src/assets/sounds/*.wav` | Copiar 4 archivos |
+| `src/hooks/useSoundEffects.ts` | Crear hook |
+| `src/pages/QuizView.tsx` | Integrar sonidos correcta/incorrecta/XP/módulo |
+| `src/pages/LessonView.tsx` | Integrar sonido XP |
 
