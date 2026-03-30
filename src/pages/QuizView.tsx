@@ -14,6 +14,7 @@ import { LevelUpModal } from "@/components/LevelUpModal";
 import { ConfettiEffect } from "@/components/ConfettiEffect";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
+import { useSoundEffects } from "@/hooks/useSoundEffects";
 
 interface Question {
   id: string;

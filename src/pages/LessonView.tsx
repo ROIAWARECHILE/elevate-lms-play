@@ -13,6 +13,7 @@ import { LevelUpModal } from "@/components/LevelUpModal";
 import { ConfettiEffect } from "@/components/ConfettiEffect";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 import { LessonSkeleton } from "@/components/SkeletonLoaders";
+import { useSoundEffects } from "@/hooks/useSoundEffects";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
