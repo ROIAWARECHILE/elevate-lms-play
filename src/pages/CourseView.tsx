@@ -255,6 +255,7 @@ export default function CourseView() {
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
   const [completedQuizzes, setCompletedQuizzes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const activeNodeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchData = async () => {
