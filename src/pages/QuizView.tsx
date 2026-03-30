@@ -46,6 +46,7 @@ export default function QuizView() {
   const [newLevel, setNewLevel] = useState(1);
   const [showConfetti, setShowConfetti] = useState(false);
   const [shakeWrong, setShakeWrong] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const correctCountRef = useRef(0);
 
   useEffect(() => {
