@@ -250,6 +250,7 @@ function SvgConnectors({ nodes, nodeSpacing }: { nodes: PathNode[]; nodeSpacing:
 export default function CourseView() {
   const { courseId } = useParams();
   const { user } = useAuth();
+  const location = useLocation();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
