@@ -166,18 +166,18 @@ REGLAS IMPORTANTES:
       }
     }
 
-    console.log("Calling OpenAI API with gpt-4o...");
+    console.log(`Calling AI API with ${AI_MODEL}...`);
 
     const openaiResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
+      AI_URL,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          Authorization: `Bearer ${API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gpt-4o",
+          model: AI_MODEL,
           messages: [
             {
               role: "user",
