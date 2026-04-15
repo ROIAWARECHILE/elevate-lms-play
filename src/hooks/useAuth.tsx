@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from "react";
+import { useState, useEffect, useRef, createContext, useContext, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -58,10 +58,9 @@ async function validateStreak(profile: Profile): Promise<Profile> {
   const yesterdayStr = getLocalDate(yesterday);
 
   if (lastActivity === today || lastActivity === yesterdayStr) {
-    return profile; // streak is still valid
+    return profile;
   }
 
-  // Streak is broken — reset to 0
   await supabase
     .from("profiles")
     .update({ current_streak: 0 })
@@ -76,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [loading, setLoading] = useState(true);
+  const initialLoadDone = useRef(false);
 
   const fetchProfile = async (userId: string) => {
     const [profileRes, rolesRes] = await Promise.all([
@@ -90,28 +90,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    // 1. Initial session load — wait for profile before setting loading=false
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        await fetchProfile(session.user.id);
+      }
+      setLoading(false);
+      initialLoadDone.current = true;
+    });
+
+    // 2. Auth state changes after initial load
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      async (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
-          setTimeout(() => fetchProfile(session.user.id), 0);
+          await fetchProfile(session.user.id);
         } else {
           setProfile(null);
           setRoles([]);
         }
-        setLoading(false);
+        // Only update loading if initial load already happened
+        if (initialLoadDone.current) {
+          setLoading(false);
+        }
       }
     );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      }
-      setLoading(false);
-    });
 
     return () => subscription.unsubscribe();
   }, []);
