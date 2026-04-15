@@ -1,55 +1,47 @@
 
 
-# Plan: Generar curso "Ventas High-Ticket para Piscinas de Fibra de Vidrio"
+# Plan: Corregir Sistema de Autenticación y Registro
 
-## Contexto
+## Problemas identificados
 
-El intento anterior falló porque la clave de OpenAI no tiene crédito. Usaremos **Lovable AI** (ya configurada con `LOVABLE_API_KEY`) para generar la estructura del curso y luego insertarla en la base de datos.
+### 1. Race condition entre loading y fetchProfile
+En `useAuth.tsx`, `setLoading(false)` se ejecuta **antes** de que `fetchProfile` termine. Esto causa:
+- Usuario inicia sesion → `loading = false`, `user = {...}`, `profile = null`
+- `AppLayout` ve `profile` sin `company_id` (porque es null) → redirige a `/auth?choose=true`
+- El usuario queda atrapado en la pantalla de eleccion de rol aunque ya tiene empresa
 
-**Usuario:** trayenkooliva@gmail.com  
-**Company ID:** `a1b2c3d4-0001-4000-8000-000000000001`  
-**User ID:** `ec62a31c-1587-47a7-b3f8-94e59de5015a`
+### 2. Auth.tsx redirige prematuramente
+El `onAuthStateChange` con evento `SIGNED_IN` navega a `/app` sin esperar a que el perfil cargue. El perfil puede no estar listo cuando `AppLayout` lo evalua.
 
-## Estructura del curso (basada en el PDF)
+### 3. Registro sin confirmacion de email
+Tras `signUp`, se muestra la pantalla de eleccion de rol. Pero si el email no esta confirmado, el usuario no puede autenticarse completamente, y las paginas `/onboarding` y `/join` que dependen de `user` no funcionan.
 
-8 módulos ("Mundos"), cada uno con 3 lecciones y un quiz:
+### 4. Error de build en EditCourse.tsx
+Linea 187: `{ [field]: value }` genera un tipo dinamico incompatible con el tipado estricto de Supabase.
 
-1. Mentalidad y estándar comercial
-2. Producto y ventaja competitiva
-3. Psicología del comprador high-ticket
-4. Diagnóstico consultivo
-5. Narrativa de valor y storytelling
-6. Objeciones y fricción de decisión
-7. Cierre ético y avance de compromiso
-8. Sistema, hábitos y excelencia
+## Solucion
 
-## Implementación
+### Archivo: `src/hooks/useAuth.tsx`
+- **No llamar `setLoading(false)` hasta que `fetchProfile` haya terminado**
+- Cambiar el flujo: `getSession` → si hay sesion, `await fetchProfile(...)` → entonces `setLoading(false)`
+- En `onAuthStateChange`, solo actualizar user/session inmediatamente, pero esperar a que fetchProfile termine antes de marcar loading como false (solo si es el primer load)
+- Usar un ref para saber si ya se hizo la carga inicial y evitar doble-set de loading
 
-### 1. Actualizar edge function `generate-course` para usar Lovable AI
+### Archivo: `src/pages/Auth.tsx`
+- Eliminar la navegacion directa desde `onAuthStateChange`. En su lugar, usar un `useEffect` que observe `user`, `profile` y `authLoading` para decidir cuando redirigir
+- Solo redirigir cuando `authLoading === false && user && profile?.company_id`
+- Si `authLoading === false && user && profile && !profile.company_id` → mostrar role choice
+- Esto elimina la race condition porque espera al perfil completo
 
-Modificar `supabase/functions/generate-course/index.ts`:
-- Cambiar el endpoint de OpenAI (`api.openai.com`) a Lovable AI Gateway (`ai.gateway.lovable.dev/v1/chat/completions`)
-- Cambiar `OPENAI_API_KEY` por `LOVABLE_API_KEY`
-- Cambiar el modelo de `gpt-4o` a `google/gemini-2.5-pro` (necesita manejar contenido largo y estructurado)
-- Mantener el mismo tool calling schema y toda la lógica de inserción en DB
-
-### 2. Invocar la edge function con el contenido del PDF
-
-Llamar `generate-course` con:
-- Título: "Ventas High-Ticket para Piscinas de Fibra de Vidrio"
-- Instrucciones: contenido completo del PDF como contexto
-- Nivel: intermediate
-- CompanyId y UserId del usuario
-
-Esto generará los 8 módulos con lecciones detalladas y quizzes, y los insertará automáticamente en la base de datos.
+### Archivo: `src/pages/admin/EditCourse.tsx`
+- Linea 187: castear el objeto de update para satisfacer el tipado estricto
+- Cambiar `{ [field]: value }` a un objeto tipado explicitamente
 
 ## Archivos a modificar
 
 | Archivo | Cambio |
 |---|---|
-| `supabase/functions/generate-course/index.ts` | Migrar de OpenAI a Lovable AI Gateway |
-
-## Beneficio adicional
-
-Al migrar a Lovable AI, **todas las futuras generaciones de cursos** funcionarán sin depender de créditos de OpenAI. Es una mejora permanente.
+| `src/hooks/useAuth.tsx` | No marcar `loading=false` hasta que fetchProfile termine |
+| `src/pages/Auth.tsx` | Reemplazar navegacion por onAuthStateChange con useEffect basado en profile |
+| `src/pages/admin/EditCourse.tsx` | Fix tipo en linea 187 |
 
