@@ -71,7 +71,6 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showRoleChoice, setShowRoleChoice] = useState(false);
   const justRegisteredRef = useRef(false);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -80,45 +79,25 @@ export default function Auth() {
   const redirectTo = searchParams.get("redirect") || "/app";
   const chooseMode = searchParams.get("choose") === "true";
 
-  // If user is authenticated but has no company, show role choice
+  // Single useEffect to handle all redirect logic based on auth state
   useEffect(() => {
-    if (!authLoading && user && profile && !profile.company_id) {
-      setShowRoleChoice(true);
-    }
-  }, [authLoading, user, profile]);
+    if (authLoading) return; // Wait for auth + profile to fully load
+    if (justRegisteredRef.current) return; // Don't redirect after fresh registration
 
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      // Skip auto-redirect if user just registered or is choosing role
-      if (justRegisteredRef.current) return;
-      if (showRoleChoice || chooseMode) return;
-
-      if (session && event === "SIGNED_IN") {
-        navigate(redirectTo);
+    if (user && profile) {
+      if (profile.company_id) {
+        // User has a company — send to app
+        navigate(redirectTo, { replace: true });
       }
-    });
-
-    // For returning users who are already logged in (not registering)
-    if (!justRegisteredRef.current && !chooseMode) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session && !showRoleChoice) {
-          // Let the profile-based useEffect handle no-company users
-          if (!authLoading && profile?.company_id) {
-            navigate(redirectTo);
-          }
-        }
-      });
+      // If user has no company, the render below will show RoleChoiceScreen
     }
-
-    return () => subscription.unsubscribe();
-  }, [navigate, redirectTo, showRoleChoice, chooseMode, authLoading, profile]);
+  }, [authLoading, user, profile, navigate, redirectTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
       if (isRegister) {
-        // Mark as just registered BEFORE signUp so the auth listener won't redirect
         justRegisteredRef.current = true;
 
         const { error } = await supabase.auth.signUp({
@@ -137,10 +116,10 @@ export default function Auth() {
           title: "¡Cuenta creada!",
           description: "Revisa tu correo para confirmar tu cuenta.",
         });
-        setShowRoleChoice(true);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        // Redirect will be handled by the useEffect above once profile loads
       }
     } catch (error: any) {
       toast({
@@ -153,7 +132,8 @@ export default function Auth() {
     }
   };
 
-  if (showRoleChoice || chooseMode) {
+  // Show role choice if: explicit choose mode, just registered, or user has no company
+  if (chooseMode || justRegisteredRef.current || (!authLoading && user && profile && !profile.company_id)) {
     return <RoleChoiceScreen />;
   }
 

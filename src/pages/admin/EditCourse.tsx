@@ -184,7 +184,7 @@ export default function EditCourse() {
     // debounce save
     const qId = q.id;
     if (qId) {
-      supabase.from("questions").update({ [field]: value }).eq("id", qId).then();
+      supabase.from("questions").update({ [field]: value } as any).eq("id", qId).then();
     }
   };
 
