@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Loader2, Building2, Users } from "lucide-react";
+import { ArrowLeft, Loader2, Building2, Users, MailCheck } from "lucide-react";
 import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -64,6 +64,36 @@ function RoleChoiceScreen() {
   );
 }
 
+
+function EmailConfirmationScreen({ email, onBackToLogin }: { email: string; onBackToLogin: () => void }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 relative">
+      <div className="absolute inset-0 gradient-hero opacity-5" />
+      <div className="w-full max-w-md relative z-10">
+        <Card className="shadow-elevated border-border">
+          <CardHeader className="text-center pb-4">
+            <div className="flex justify-center mb-4">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                <MailCheck className="w-8 h-8 text-primary" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">Confirma tu correo</CardTitle>
+            <CardDescription>
+              Enviamos un enlace de confirmación a <span className="font-medium text-foreground">{email}</span>.
+              Después de confirmarlo, vuelve e inicia sesión para elegir si eres empresa o colaborador.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={onBackToLogin} className="w-full gradient-primary shadow-primary h-11">
+              Ir a iniciar sesión
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 export default function Auth() {
   const [searchParams] = useSearchParams();
   const [isRegister, setIsRegister] = useState(searchParams.get("mode") === "register");
@@ -71,6 +101,7 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [confirmationEmail, setConfirmationEmail] = useState("");
   const justRegisteredRef = useRef(false);
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -79,19 +110,19 @@ export default function Auth() {
   const redirectTo = searchParams.get("redirect") || "/app";
   const chooseMode = searchParams.get("choose") === "true";
 
-  // Single useEffect to handle all redirect logic based on auth state
+  // Single useEffect to handle all redirect logic based on fully restored auth + profile state.
   useEffect(() => {
-    if (authLoading) return; // Wait for auth + profile to fully load
-    if (justRegisteredRef.current) return; // Don't redirect after fresh registration
+    if (authLoading) return;
 
-    if (user && profile) {
-      if (profile.company_id) {
-        // User has a company — send to app
-        navigate(redirectTo, { replace: true });
-      }
-      // If user has no company, the render below will show RoleChoiceScreen
+    if (!user) {
+      justRegisteredRef.current = false;
+      return;
     }
-  }, [authLoading, user, profile, navigate, redirectTo]);
+
+    if (user && profile?.company_id && !justRegisteredRef.current && !chooseMode) {
+      navigate(redirectTo, { replace: true });
+    }
+  }, [authLoading, user, profile?.company_id, navigate, redirectTo, chooseMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,21 +131,32 @@ export default function Auth() {
       if (isRegister) {
         justRegisteredRef.current = true;
 
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: { full_name: fullName },
-            emailRedirectTo: `${APP_URL}${redirectTo}`,
+            emailRedirectTo: `${APP_URL}/auth?choose=true`,
           },
         });
         if (error) {
           justRegisteredRef.current = false;
           throw error;
         }
+
+        if (!data.session) {
+          justRegisteredRef.current = false;
+          setConfirmationEmail(email);
+          toast({
+            title: "¡Cuenta creada!",
+            description: "Revisa tu correo para confirmar tu cuenta antes de elegir tu rol.",
+          });
+          return;
+        }
+
         toast({
           title: "¡Cuenta creada!",
-          description: "Revisa tu correo para confirmar tu cuenta.",
+          description: "Ahora elige cómo quieres usar Kibbo.",
         });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -132,8 +174,28 @@ export default function Auth() {
     }
   };
 
-  // Show role choice if: explicit choose mode, just registered, or user has no company
-  if (chooseMode || justRegisteredRef.current || (!authLoading && user && profile && !profile.company_id)) {
+  if (confirmationEmail) {
+    return (
+      <EmailConfirmationScreen
+        email={confirmationEmail}
+        onBackToLogin={() => {
+          setConfirmationEmail("");
+          setIsRegister(false);
+        }}
+      />
+    );
+  }
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Show role choice only when the user is authenticated and the profile is loaded without a company.
+  if (user && profile && !profile.company_id && (chooseMode || justRegisteredRef.current || true)) {
     return <RoleChoiceScreen />;
   }
 
