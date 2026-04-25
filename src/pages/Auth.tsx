@@ -195,7 +195,7 @@ export default function Auth() {
   }
 
   // Show role choice only when the user is authenticated and the profile is loaded without a company.
-  if (user && profile && !profile.company_id && (chooseMode || justRegisteredRef.current || true)) {
+  if (user && profile && !profile.company_id) {
     return <RoleChoiceScreen />;
   }
 
