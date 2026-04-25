@@ -164,9 +164,20 @@ export default function Auth() {
         // Redirect will be handled by the useEffect above once profile loads
       }
     } catch (error: any) {
+      const raw = (error?.message || "").toLowerCase();
+      let friendly = error?.message || "Algo salió mal. Intenta de nuevo.";
+      if (raw.includes("email not confirmed")) {
+        friendly = "Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada (y la carpeta de spam).";
+      } else if (raw.includes("invalid login credentials")) {
+        friendly = "Correo o contraseña incorrectos.";
+      } else if (raw.includes("user already registered")) {
+        friendly = "Este correo ya tiene una cuenta. Inicia sesión.";
+      } else if (raw.includes("password should be at least")) {
+        friendly = "La contraseña debe tener al menos 6 caracteres.";
+      }
       toast({
         title: "Error",
-        description: error.message,
+        description: friendly,
         variant: "destructive",
       });
     } finally {
@@ -197,6 +208,38 @@ export default function Auth() {
   // Show role choice only when the user is authenticated and the profile is loaded without a company.
   if (user && profile && !profile.company_id) {
     return <RoleChoiceScreen />;
+  }
+
+  // Fallback: authenticated but profile failed to load. Avoid blank screen.
+  if (user && !profile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 relative">
+        <div className="absolute inset-0 gradient-hero opacity-5" />
+        <Card className="w-full max-w-md shadow-elevated relative z-10">
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl">No pudimos cargar tu perfil</CardTitle>
+            <CardDescription>
+              Hubo un problema al sincronizar tu cuenta. Intenta nuevamente o cierra sesión para volver a entrar.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button onClick={() => window.location.reload()} className="w-full gradient-primary">
+              Reintentar
+            </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.href = "/auth";
+              }}
+              className="w-full"
+            >
+              Cerrar sesión
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (

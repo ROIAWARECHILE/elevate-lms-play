@@ -43,7 +43,7 @@ const AuthContext = createContext<AuthContextType>({
   refreshProfile: async () => {},
 });
 
-const PROFILE_RETRY_DELAYS = [0, 250, 700, 1400];
+const PROFILE_RETRY_DELAYS = [0, 350];
 
 function getLocalDate(date?: Date): string {
   const d = date || new Date();
