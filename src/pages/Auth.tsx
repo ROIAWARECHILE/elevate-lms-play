@@ -119,10 +119,10 @@ export default function Auth() {
       return;
     }
 
-    if (user && profile?.company_id && !justRegisteredRef.current && !chooseMode) {
+    if (user && profile?.company_id && !justRegisteredRef.current) {
       navigate(redirectTo, { replace: true });
     }
-  }, [authLoading, user, profile?.company_id, navigate, redirectTo, chooseMode]);
+  }, [authLoading, user, profile?.company_id, navigate, redirectTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
