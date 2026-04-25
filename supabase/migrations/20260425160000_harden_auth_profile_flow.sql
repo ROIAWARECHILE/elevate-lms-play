@@ -124,3 +124,29 @@ BEGIN
   RETURN _company_id;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', '')
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = CASE
+      WHEN public.profiles.full_name = '' AND EXCLUDED.full_name <> '' THEN EXCLUDED.full_name
+      ELSE public.profiles.full_name
+    END;
+
+  INSERT INTO public.user_roles (user_id, role)
+  VALUES (NEW.id, 'collaborator')
+  ON CONFLICT (user_id, role) DO NOTHING;
+
+  RETURN NEW;
+END;
+$$;
