@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,11 +18,11 @@ export default function JoinCompany() {
   const [joining, setJoining] = useState(false);
   const [joined, setJoined] = useState(false);
 
-  // Redirect to auth if not logged in
-  if (!authLoading && !user) {
-    navigate("/auth?mode=register", { replace: true });
-    return null;
-  }
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth?mode=register&redirect=/join", { replace: true });
+    }
+  }, [authLoading, user, navigate]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +50,10 @@ export default function JoinCompany() {
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
+  }
+
+  if (!user) {
+    return null;
   }
 
   // Success: pending approval
