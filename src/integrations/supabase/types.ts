@@ -467,6 +467,7 @@ export type Database = {
         Args: { _name: string; _slug: string }
         Returns: string
       }
+      ensure_user_profile: { Args: { _full_name?: string }; Returns: undefined }
       get_user_company_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {

@@ -1,47 +1,73 @@
 
+# Plan: Reparar definitivamente login y registro
 
-# Plan: Corregir Sistema de Autenticación y Registro
+## Diagnóstico real (verificado contra la BD)
 
-## Problemas identificados
+Consulté `pg_proc` y `pg_trigger` directamente. Lo que está pasando es distinto a lo que asumimos antes:
 
-### 1. Race condition entre loading y fetchProfile
-En `useAuth.tsx`, `setLoading(false)` se ejecuta **antes** de que `fetchProfile` termine. Esto causa:
-- Usuario inicia sesion → `loading = false`, `user = {...}`, `profile = null`
-- `AppLayout` ve `profile` sin `company_id` (porque es null) → redirige a `/auth?choose=true`
-- El usuario queda atrapado en la pantalla de eleccion de rol aunque ya tiene empresa
+### 1. La migración anterior NUNCA se aplicó a la base de datos
+- `ensure_user_profile` **no existe** en Postgres (solo `create_company_for_user`, `join_company_by_code`, `handle_new_user`).
+- Pero `useAuth.tsx` ya intenta llamar `supabase.rpc("ensure_user_profile", ...)` como fallback defensivo.
+- Resultado: cada login hace 4 reintentos × 2 queries paralelas + 1 RPC inexistente que falla → la pantalla queda atascada en loading o redirige mal.
 
-### 2. Auth.tsx redirige prematuramente
-El `onAuthStateChange` con evento `SIGNED_IN` navega a `/app` sin esperar a que el perfil cargue. El perfil puede no estar listo cuando `AppLayout` lo evalua.
+### 2. Confirmación de email está activa y bloqueando usuarios reales
+Verifiqué `auth.users`: los últimos 3 registros tienen `email_confirmed_at = NULL`:
+- `3292691@clases.edu.sv`
+- `yerko.ar.ar@gmail.com`
+- `axeldelarosa3010@gmail.com`
 
-### 3. Registro sin confirmacion de email
-Tras `signUp`, se muestra la pantalla de eleccion de rol. Pero si el email no esta confirmado, el usuario no puede autenticarse completamente, y las paginas `/onboarding` y `/join` que dependen de `user` no funcionan.
+Estos usuarios **nunca pueden iniciar sesión** porque Supabase rechaza con "Email not confirmed". El error que reporta el usuario probablemente es este, no un bug del código.
 
-### 4. Error de build en EditCourse.tsx
-Linea 187: `{ [field]: value }` genera un tipo dinamico incompatible con el tipado estricto de Supabase.
+### 3. El trigger `handle_new_user` SÍ funciona
+Todos los profiles existen y tienen rol `collaborator` por defecto. El trigger no es el problema.
 
-## Solucion
+### 4. `Auth.tsx` no maneja `user && profile === null`
+Si por alguna razón el profile no carga (timeout, error de red), la pantalla queda en blanco: ni redirige, ni muestra `RoleChoiceScreen`, ni vuelve al login.
 
-### Archivo: `src/hooks/useAuth.tsx`
-- **No llamar `setLoading(false)` hasta que `fetchProfile` haya terminado**
-- Cambiar el flujo: `getSession` → si hay sesion, `await fetchProfile(...)` → entonces `setLoading(false)`
-- En `onAuthStateChange`, solo actualizar user/session inmediatamente, pero esperar a que fetchProfile termine antes de marcar loading como false (solo si es el primer load)
-- Usar un ref para saber si ya se hizo la carga inicial y evitar doble-set de loading
+## Solución
 
-### Archivo: `src/pages/Auth.tsx`
-- Eliminar la navegacion directa desde `onAuthStateChange`. En su lugar, usar un `useEffect` que observe `user`, `profile` y `authLoading` para decidir cuando redirigir
-- Solo redirigir cuando `authLoading === false && user && profile?.company_id`
-- Si `authLoading === false && user && profile && !profile.company_id` → mostrar role choice
-- Esto elimina la race condition porque espera al perfil completo
+### A. Aplicar la migración pendiente (CRÍTICO)
+Re-crear la migración con un timestamp nuevo para que se ejecute. Contenido:
+- `ensure_user_profile(text)` SECURITY DEFINER → idempotente, crea profile + rol collaborator si faltan.
+- `create_company_for_user` y `join_company_by_code` con `PERFORM ensure_user_profile('')` antes de operar, slug único auto-generado, normalización de código.
+- `handle_new_user` idempotente con `ON CONFLICT`.
+- `GRANT EXECUTE ... TO authenticated` en `ensure_user_profile`.
 
-### Archivo: `src/pages/admin/EditCourse.tsx`
-- Linea 187: castear el objeto de update para satisfacer el tipado estricto
-- Cambiar `{ [field]: value }` a un objeto tipado explicitamente
+### B. Decidir qué hacer con la confirmación de email
+Dos opciones a discutir con el usuario:
+
+| Opción | Trade-off |
+|---|---|
+| Desactivar "Confirm email" en Supabase Auth | UX inmediata, sesión activa al instante tras signUp. Riesgo: emails falsos. Recomendado para apps internas/B2B con código de invitación. |
+| Mantener confirmación + mejorar UX | Más seguro, pero el usuario debe ir al correo. Hoy ya mostramos `EmailConfirmationScreen`, pero el `signInWithPassword` posterior fallará silenciosamente si no confirmó. Hay que detectar el error específico y mostrar mensaje claro. |
+
+Para este proyecto (LMS corporativo con códigos de invitación), recomiendo **desactivar la confirmación**. Las cuentas se validan implícitamente al unirse a una empresa.
+
+### C. Endurecer `useAuth.tsx`
+- Si `loadProfile` agota reintentos sin profile, devolver `profile: null` pero **igual marcar `loading=false`** (ya lo hace, está bien).
+- Reducir reintentos de 4 a 2 (250ms, 700ms) — el trigger es síncrono, no necesita más.
+- No llamar `ensure_user_profile` si la primera consulta YA devolvió profile (ya está bien).
+
+### D. Endurecer `Auth.tsx`
+Cubrir el caso `user && !profile && !authLoading`:
+- Mostrar mensaje "No pudimos cargar tu perfil" + botón "Reintentar" (llama `refreshProfile()`) + botón "Cerrar sesión".
+- Evita pantalla en blanco si la BD está temporalmente lenta.
+
+### E. Mejorar mensajes de error en login
+En `handleSubmit` del login, detectar errores de Supabase comunes y traducirlos:
+- `"Email not confirmed"` → "Debes confirmar tu correo antes de iniciar sesión. Revisa tu bandeja de entrada."
+- `"Invalid login credentials"` → "Correo o contraseña incorrectos."
+- Otros → mensaje genérico actual.
 
 ## Archivos a modificar
 
 | Archivo | Cambio |
 |---|---|
-| `src/hooks/useAuth.tsx` | No marcar `loading=false` hasta que fetchProfile termine |
-| `src/pages/Auth.tsx` | Reemplazar navegacion por onAuthStateChange con useEffect basado en profile |
-| `src/pages/admin/EditCourse.tsx` | Fix tipo en linea 187 |
+| `supabase/migrations/20260425170000_apply_auth_hardening.sql` | **CREAR** — re-aplicar contenido de la migración pendiente con nuevo timestamp |
+| `src/hooks/useAuth.tsx` | Reducir reintentos de 4 a 2 en `PROFILE_RETRY_DELAYS` |
+| `src/pages/Auth.tsx` | Agregar fallback UI para `user && !profile`; traducir errores de Supabase |
+| Supabase Dashboard (acción manual del usuario) | Desactivar "Confirm email" en Authentication → Providers → Email, si elige opción A |
 
+## Pregunta para el usuario antes de implementar
+
+Necesito una decisión: ¿quieres desactivar la confirmación de email (recomendado para LMS B2B) o mantenerla con mejor UX? Si la mantienes, los usuarios actuales sin confirmar (`3292691@clases.edu.sv`, `yerko.ar.ar@gmail.com`, `axeldelarosa3010@gmail.com`) seguirán bloqueados hasta que confirmen su correo.
