@@ -221,9 +221,9 @@ export default function QuizView() {
   if (finished) {
     return (
       <div className="max-w-lg mx-auto">
-        <ConfettiEffect trigger={showConfetti} />
         <XpAnimation amount={quiz?.xp_reward || 25} show={showXp} onComplete={() => setShowXp(false)} />
         <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
+        <AchievementUnlockModal achievements={unlocked} onClose={() => setUnlocked([])} />
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
           <Card className="shadow-card overflow-hidden">
             <div className={`p-8 text-center ${passed ? "gradient-primary" : "bg-destructive/10"}`}>
@@ -234,12 +234,12 @@ export default function QuizView() {
             <CardContent className="p-6 space-y-4">
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
-                  <AnimatedCounter value={finalScore} className="text-2xl font-bold" suffix="%" />
+                  <NumberTicker value={finalScore} className="text-2xl font-bold" suffix="%" />
                   <p className="text-xs text-muted-foreground">Puntaje</p>
                 </div>
                 <div>
                   <p className="text-2xl font-bold">
-                    <AnimatedCounter value={correctCount} />/{questions.length}
+                    <NumberTicker value={correctCount} />/{questions.length}
                   </p>
                   <p className="text-xs text-muted-foreground">Correctas</p>
                 </div>
