@@ -8,7 +8,10 @@ import { BookOpen, Trophy, Flame, Zap, Target, TrendingUp, Users, Award, ArrowRi
 import { motion } from "framer-motion";
 import { WalkthroughOverlay } from "@/components/WalkthroughOverlay";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { NumberTicker } from "@/components/magic/NumberTicker";
 import { KibboExpression } from "@/components/KibboExpression";
+import { StreakWidget } from "@/components/StreakWidget";
+import { DailyQuestsWidget } from "@/components/DailyQuestsWidget";
 import { Link } from "react-router-dom";
 
 const fadeIn = {
@@ -130,7 +133,7 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {isNumeric ? <AnimatedCounter value={stat.value} duration={800} /> : stat.value}
+                {isNumeric ? <NumberTicker value={stat.value} /> : stat.value}
               </p>
               <p className="text-xs text-muted-foreground">{stat.label}</p>
             </div>
@@ -202,6 +205,15 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
         {stats.map((stat, i) => (
           <StatCard key={stat.label} stat={stat} index={i} />
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <StreakWidget
+          currentStreak={profile?.current_streak || 0}
+          longestStreak={profile?.longest_streak || 0}
+          lastActivityDate={(profile as any)?.last_activity_date ?? null}
+        />
+        <DailyQuestsWidget />
       </div>
 
       <motion.div {...fadeIn} transition={{ delay: 0.5 }}>

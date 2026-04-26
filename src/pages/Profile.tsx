@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Zap, Flame, Trophy, Award, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { AchievementsGrid } from "@/components/AchievementsGrid";
 
 export default function Profile() {
   const { user, profile } = useAuth();
@@ -114,6 +115,10 @@ export default function Profile() {
           </motion.div>
         ))}
       </div>
+
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+        <AchievementsGrid />
+      </motion.div>
     </div>
   );
 }

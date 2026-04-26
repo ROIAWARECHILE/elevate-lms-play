@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import { useHotkeys } from "react-hotkeys-hook";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -11,10 +12,12 @@ import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { XpAnimation } from "@/components/XpAnimation";
 import { LevelUpModal } from "@/components/LevelUpModal";
-import { ConfettiEffect } from "@/components/ConfettiEffect";
-import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { AchievementUnlockModal } from "@/components/AchievementUnlockModal";
+import { NumberTicker } from "@/components/magic/NumberTicker";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
+import { fireSchool, fireStars } from "@/lib/celebrate";
+import { evaluateAchievements, type UnlockedAchievement } from "@/lib/achievements";
 
 interface Question {
   id: string;
@@ -47,7 +50,9 @@ export default function QuizView() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [shakeWrong, setShakeWrong] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
   const correctCountRef = useRef(0);
+
 
   useEffect(() => {
     const fetch = async () => {
@@ -111,6 +116,7 @@ export default function QuizView() {
       const score = Math.round((finalCorrect / questions.length) * 100);
       if (score >= (quiz?.passing_score || 70)) {
         setShowConfetti(true);
+        fireSchool();
       }
       saveResult(finalCorrect).finally(() => setIsSaving(false));
     }
@@ -185,7 +191,17 @@ export default function QuizView() {
           setTimeout(() => playModuleComplete(), 800);
         }
 
+        // Update daily quests
+        try {
+          await supabase.rpc("increment_quest_progress", { _quest_type: "quiz", _amount: 1 });
+          await supabase.rpc("increment_quest_progress", { _quest_type: "xp", _amount: xpReward });
+        } catch (e) { /* ignore */ }
+
         await refreshProfile();
+
+        // Evaluate achievements
+        const newly = await evaluateAchievements(user.id, profile.company_id!);
+        if (newly.length > 0) setTimeout(() => setUnlocked(newly), 1500);
       }
     } catch (e) {
       console.error(e);
@@ -216,9 +232,9 @@ export default function QuizView() {
   if (finished) {
     return (
       <div className="max-w-lg mx-auto">
-        <ConfettiEffect trigger={showConfetti} />
         <XpAnimation amount={quiz?.xp_reward || 25} show={showXp} onComplete={() => setShowXp(false)} />
         <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
+        <AchievementUnlockModal achievements={unlocked} onClose={() => setUnlocked([])} />
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
           <Card className="shadow-card overflow-hidden">
             <div className={`p-8 text-center ${passed ? "gradient-primary" : "bg-destructive/10"}`}>
@@ -229,12 +245,12 @@ export default function QuizView() {
             <CardContent className="p-6 space-y-4">
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
-                  <AnimatedCounter value={finalScore} className="text-2xl font-bold" suffix="%" />
+                  <NumberTicker value={finalScore} className="text-2xl font-bold" suffix="%" />
                   <p className="text-xs text-muted-foreground">Puntaje</p>
                 </div>
                 <div>
                   <p className="text-2xl font-bold">
-                    <AnimatedCounter value={correctCount} />/{questions.length}
+                    <NumberTicker value={correctCount} />/{questions.length}
                   </p>
                   <p className="text-xs text-muted-foreground">Correctas</p>
                 </div>

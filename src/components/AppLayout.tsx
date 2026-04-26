@@ -4,15 +4,18 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { BottomTabBar } from "@/components/BottomTabBar";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Loader2, Clock } from "lucide-react";
+import { Loader2, Clock, Search } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CommandPalette } from "@/components/CommandPalette";
+import { useGoToShortcuts } from "@/hooks/useGoToShortcuts";
 
 export function AppLayout() {
   const { user, profile, loading, isPending, signOut } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
+  useGoToShortcuts();
 
   if (loading) {
     return (
@@ -59,12 +62,27 @@ export function AppLayout() {
 
   return (
     <SidebarProvider>
+      <CommandPalette />
       <div className="min-h-screen flex w-full">
         {!isMobile && <AppSidebar />}
         <div className="flex-1 flex flex-col min-w-0">
           {!isMobile && (
-            <header className="h-14 flex items-center border-b border-border px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-40">
-              <SidebarTrigger className="mr-4" />
+            <header className="h-14 flex items-center border-b border-border px-4 bg-background/80 backdrop-blur-sm sticky top-0 z-40 gap-3">
+              <SidebarTrigger />
+              <button
+                onClick={() => {
+                  // Synthesize Cmd+K to open the palette
+                  document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+                }}
+                className="ml-auto inline-flex items-center gap-2 h-8 px-3 rounded-md border border-border bg-muted/40 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Buscar (Cmd/Ctrl + K)"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Buscar…</span>
+                <kbd className="ml-2 inline-flex items-center gap-0.5 rounded bg-background px-1.5 py-0.5 text-[10px] font-mono border border-border">
+                  ⌘K
+                </kbd>
+              </button>
             </header>
           )}
           <main className={`flex-1 p-4 md:p-6 ${isMobile ? "pb-20" : ""}`}>
