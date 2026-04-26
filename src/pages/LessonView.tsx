@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import { useHotkeys } from "react-hotkeys-hook";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -10,10 +11,12 @@ import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { XpAnimation } from "@/components/XpAnimation";
 import { LevelUpModal } from "@/components/LevelUpModal";
-import { ConfettiEffect } from "@/components/ConfettiEffect";
+import { AchievementUnlockModal } from "@/components/AchievementUnlockModal";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 import { LessonSkeleton } from "@/components/SkeletonLoaders";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
+import { fireSchool, fireFromButton } from "@/lib/celebrate";
+import { evaluateAchievements, type UnlockedAchievement } from "@/lib/achievements";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -27,8 +30,10 @@ export default function LessonView() {
   const [loading, setLoading] = useState(true);
   const [showXp, setShowXp] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
   const [newLevel, setNewLevel] = useState(1);
+  const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
+
+  useHotkeys("left", () => navigate(-1), { preventDefault: true });
 
   useEffect(() => {
     const fetch = async () => {
@@ -99,7 +104,7 @@ export default function LessonView() {
 
       setCompleted(true);
       setShowXp(true);
-      setShowConfetti(true);
+      fireSchool();
       playXp();
 
       if (result.leveledUp) {
@@ -107,7 +112,17 @@ export default function LessonView() {
         setTimeout(() => setShowLevelUp(true), 1200);
       }
 
+      // Update daily quests
+      try {
+        await supabase.rpc("increment_quest_progress", { _quest_type: "lessons", _amount: 1 });
+        await supabase.rpc("increment_quest_progress", { _quest_type: "xp", _amount: xpReward });
+      } catch (e) { /* ignore */ }
+
       await refreshProfile();
+
+      // Evaluate achievements
+      const newly = await evaluateAchievements(user.id, profile.company_id!);
+      if (newly.length > 0) setTimeout(() => setUnlocked(newly), 1500);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -119,9 +134,9 @@ export default function LessonView() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <ConfettiEffect trigger={showConfetti} />
       <XpAnimation amount={lesson?.xp_reward || 10} show={showXp} onComplete={() => setShowXp(false)} />
       <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
+      <AchievementUnlockModal achievements={unlocked} onClose={() => setUnlocked([])} />
 
       <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
         <Link
