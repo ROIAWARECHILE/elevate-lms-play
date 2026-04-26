@@ -207,6 +207,15 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
         ))}
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <StreakWidget
+          currentStreak={profile?.current_streak || 0}
+          longestStreak={profile?.longest_streak || 0}
+          lastActivityDate={(profile as any)?.last_activity_date ?? null}
+        />
+        <DailyQuestsWidget />
+      </div>
+
       <motion.div {...fadeIn} transition={{ delay: 0.5 }}>
         <Card className="shadow-card gradient-card" data-walkthrough="daily-goal">
           <CardContent className="p-6">
