@@ -116,6 +116,7 @@ export default function QuizView() {
       const score = Math.round((finalCorrect / questions.length) * 100);
       if (score >= (quiz?.passing_score || 70)) {
         setShowConfetti(true);
+        fireSchool();
       }
       saveResult(finalCorrect).finally(() => setIsSaving(false));
     }
@@ -190,7 +191,17 @@ export default function QuizView() {
           setTimeout(() => playModuleComplete(), 800);
         }
 
+        // Update daily quests
+        try {
+          await supabase.rpc("increment_quest_progress", { _quest_type: "quiz", _amount: 1 });
+          await supabase.rpc("increment_quest_progress", { _quest_type: "xp", _amount: xpReward });
+        } catch (e) { /* ignore */ }
+
         await refreshProfile();
+
+        // Evaluate achievements
+        const newly = await evaluateAchievements(user.id, profile.company_id!);
+        if (newly.length > 0) setTimeout(() => setUnlocked(newly), 1500);
       }
     } catch (e) {
       console.error(e);
