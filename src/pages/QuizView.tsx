@@ -53,8 +53,6 @@ export default function QuizView() {
   const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
   const correctCountRef = useRef(0);
 
-  // Keyboard shortcuts
-  const currentQuestion = (null as unknown as Question);
 
   useEffect(() => {
     const fetch = async () => {
