@@ -8,7 +8,10 @@ import { BookOpen, Trophy, Flame, Zap, Target, TrendingUp, Users, Award, ArrowRi
 import { motion } from "framer-motion";
 import { WalkthroughOverlay } from "@/components/WalkthroughOverlay";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { NumberTicker } from "@/components/magic/NumberTicker";
 import { KibboExpression } from "@/components/KibboExpression";
+import { StreakWidget } from "@/components/StreakWidget";
+import { DailyQuestsWidget } from "@/components/DailyQuestsWidget";
 import { Link } from "react-router-dom";
 
 const fadeIn = {
@@ -130,7 +133,7 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {isNumeric ? <AnimatedCounter value={stat.value} duration={800} /> : stat.value}
+                {isNumeric ? <NumberTicker value={stat.value} /> : stat.value}
               </p>
               <p className="text-xs text-muted-foreground">{stat.label}</p>
             </div>
