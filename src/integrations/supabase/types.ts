@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      achievements: {
+        Row: {
+          category: string
+          created_at: string
+          description: string
+          icon: string
+          id: string
+          name: string
+          requirement_type: string
+          requirement_value: number
+          sort_order: number
+          xp_reward: number
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          description: string
+          icon?: string
+          id: string
+          name: string
+          requirement_type: string
+          requirement_value?: number
+          sort_order?: number
+          xp_reward?: number
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          description?: string
+          icon?: string
+          id?: string
+          name?: string
+          requirement_type?: string
+          requirement_value?: number
+          sort_order?: number
+          xp_reward?: number
+        }
+        Relationships: []
+      }
       companies: {
         Row: {
           created_at: string
@@ -102,6 +141,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      daily_quests: {
+        Row: {
+          claimed: boolean
+          company_id: string
+          created_at: string
+          current_value: number
+          id: string
+          quest_date: string
+          quest_type: string
+          target_value: number
+          user_id: string
+          xp_reward: number
+        }
+        Insert: {
+          claimed?: boolean
+          company_id: string
+          created_at?: string
+          current_value?: number
+          id?: string
+          quest_date?: string
+          quest_type: string
+          target_value: number
+          user_id: string
+          xp_reward?: number
+        }
+        Update: {
+          claimed?: boolean
+          company_id?: string
+          created_at?: string
+          current_value?: number
+          id?: string
+          quest_date?: string
+          quest_type?: string
+          target_value?: number
+          user_id?: string
+          xp_reward?: number
+        }
+        Relationships: []
       }
       lessons: {
         Row: {
@@ -320,6 +398,38 @@ export type Database = {
           },
         ]
       }
+      user_achievements: {
+        Row: {
+          achievement_id: string
+          company_id: string
+          id: string
+          unlocked_at: string
+          user_id: string
+        }
+        Insert: {
+          achievement_id: string
+          company_id: string
+          id?: string
+          unlocked_at?: string
+          user_id: string
+        }
+        Update: {
+          achievement_id?: string
+          company_id?: string
+          id?: string
+          unlocked_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_achievements_achievement_id_fkey"
+            columns: ["achievement_id"]
+            isOneToOne: false
+            referencedRelation: "achievements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_progress: {
         Row: {
           company_id: string
@@ -467,6 +577,27 @@ export type Database = {
         Args: { _name: string; _slug: string }
         Returns: string
       }
+      ensure_daily_quests: {
+        Args: never
+        Returns: {
+          claimed: boolean
+          company_id: string
+          created_at: string
+          current_value: number
+          id: string
+          quest_date: string
+          quest_type: string
+          target_value: number
+          user_id: string
+          xp_reward: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "daily_quests"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       ensure_user_profile: { Args: { _full_name?: string }; Returns: undefined }
       get_user_company_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
@@ -475,6 +606,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_quest_progress: {
+        Args: { _amount?: number; _quest_type: string }
+        Returns: undefined
       }
       join_company_by_code: { Args: { _code: string }; Returns: string }
       join_company_by_slug: { Args: { _slug: string }; Returns: string }
