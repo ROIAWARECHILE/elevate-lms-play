@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import { useHotkeys } from "react-hotkeys-hook";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -11,10 +12,12 @@ import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { XpAnimation } from "@/components/XpAnimation";
 import { LevelUpModal } from "@/components/LevelUpModal";
-import { ConfettiEffect } from "@/components/ConfettiEffect";
-import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { AchievementUnlockModal } from "@/components/AchievementUnlockModal";
+import { NumberTicker } from "@/components/magic/NumberTicker";
 import { updateStreakAndLevel, checkDuplicateProgress } from "@/lib/gamification";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
+import { fireSchool, fireStars } from "@/lib/celebrate";
+import { evaluateAchievements, type UnlockedAchievement } from "@/lib/achievements";
 
 interface Question {
   id: string;
@@ -47,7 +50,11 @@ export default function QuizView() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [shakeWrong, setShakeWrong] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
   const correctCountRef = useRef(0);
+
+  // Keyboard shortcuts
+  const currentQuestion = (null as unknown as Question);
 
   useEffect(() => {
     const fetch = async () => {
