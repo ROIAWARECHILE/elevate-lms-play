@@ -1,29 +1,336 @@
+// =====================================================================
+// generate-course v2 — Pipeline multi-fuente: extract → outline → materialize
+//
+// Acepta:
+//   sources: [{ kind: 'pdf'|'image'|'text'|'url'|'excel', name?, payload }]
+//   outline?: estructura ya aprobada por admin (salta extract+outline)
+//
+// Retro-compat: si recibe `pdfBase64`/`imageBase64s`/`instructions` usa
+// el flujo legacy en una sola llamada (igual que v1).
+// =====================================================================
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const TOOL_SCHEMA = {
+// ---------- AI helpers ----------
+
+function getAiConfig() {
+  const API_KEY = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("OPENAI_API_KEY");
+  if (!API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+  const useLovable = !!Deno.env.get("LOVABLE_API_KEY");
+  return {
+    apiKey: API_KEY,
+    url: useLovable
+      ? "https://ai.gateway.lovable.dev/v1/chat/completions"
+      : "https://api.openai.com/v1/chat/completions",
+    model: useLovable ? "google/gemini-2.5-pro" : "gpt-4o",
+  };
+}
+
+async function callAi(messages: any[], tool: any, opts: { temperature?: number; maxTokens?: number } = {}) {
+  const { apiKey, url, model } = getAiConfig();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages,
+      tools: [tool],
+      tool_choice: { type: "function", function: { name: tool.function.name } },
+      temperature: opts.temperature ?? 0.6,
+      max_tokens: opts.maxTokens ?? 16000,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`AI error (${res.status}): ${body.slice(0, 500)}`);
+  }
+  const data = await res.json();
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) throw new Error("AI did not return tool call");
+  return JSON.parse(toolCall.function.arguments);
+}
+
+// ---------- Tool schemas ----------
+
+const EXTRACT_TOOL = {
   type: "function",
   function: {
-    name: "generate_course_structure",
-    description:
-      "Generates a complete course structure with modules, lessons and quizzes",
+    name: "build_knowledge_brief",
+    description: "Build a structured knowledge brief from the provided sources",
+    parameters: {
+      type: "object",
+      required: ["topic", "key_concepts", "facts", "summary"],
+      properties: {
+        topic: { type: "string", description: "Main topic identified across sources" },
+        summary: { type: "string", description: "5-10 sentence summary of all material" },
+        key_concepts: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["term", "definition"],
+            properties: {
+              term: { type: "string" },
+              definition: { type: "string" },
+              example: { type: "string" },
+            },
+          },
+        },
+        facts: { type: "array", items: { type: "string" } },
+        procedures: {
+          type: "array",
+          description: "Step-by-step procedures detected in the sources",
+          items: {
+            type: "object",
+            required: ["title", "steps"],
+            properties: {
+              title: { type: "string" },
+              steps: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+        comparisons: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["title", "items"],
+            properties: {
+              title: { type: "string" },
+              items: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const OUTLINE_TOOL = {
+  type: "function",
+  function: {
+    name: "build_course_outline",
+    description: "Design a course outline with typed lessons based on the knowledge brief",
     parameters: {
       type: "object",
       required: ["description", "estimated_duration_minutes", "modules"],
       properties: {
-        description: {
-          type: "string",
-          description: "Course description (2-3 sentences)",
+        description: { type: "string" },
+        estimated_duration_minutes: { type: "number" },
+        modules: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["title", "description", "lessons"],
+            properties: {
+              title: { type: "string" },
+              description: { type: "string" },
+              lessons: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["title", "lesson_type", "objective"],
+                  properties: {
+                    title: { type: "string" },
+                    objective: { type: "string", description: "What the learner will know after" },
+                    lesson_type: {
+                      type: "string",
+                      enum: [
+                        "reading", "concept", "flashcards", "steps",
+                        "comparison", "case_study", "interactive_quiz",
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
-        estimated_duration_minutes: {
-          type: "number",
-          description: "Total estimated duration in minutes",
+      },
+    },
+  },
+};
+
+const MATERIALIZE_LESSON_TOOL = {
+  type: "function",
+  function: {
+    name: "build_lesson_blocks",
+    description: "Generate the typed content blocks for a single lesson",
+    parameters: {
+      type: "object",
+      required: ["blocks"],
+      properties: {
+        blocks: {
+          type: "array",
+          description: "Array of typed blocks matching the lesson_type",
+          items: { type: "object", additionalProperties: true },
         },
+      },
+    },
+  },
+};
+
+const MATERIALIZE_QUIZ_TOOL = {
+  type: "function",
+  function: {
+    name: "build_module_quiz",
+    description: "Generate quiz questions for a module",
+    parameters: {
+      type: "object",
+      required: ["questions"],
+      properties: {
+        questions: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["question_text", "question_type", "options", "correct_answer"],
+            properties: {
+              question_text: { type: "string" },
+              question_type: { type: "string", enum: ["multiple_choice", "true_false"] },
+              options: { type: "array", items: { type: "string" } },
+              correct_answer: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+// ---------- Source → AI content parts ----------
+
+function buildContentParts(sources: any[], textInstructions: string) {
+  const parts: any[] = [{ type: "text", text: textInstructions }];
+  for (const s of sources || []) {
+    if (s.kind === "pdf" && s.payload) {
+      parts.push({
+        type: "image_url",
+        image_url: { url: `data:application/pdf;base64,${s.payload}`, detail: "high" },
+      });
+    } else if (s.kind === "image" && s.payload) {
+      const url = String(s.payload).startsWith("data:")
+        ? s.payload
+        : `data:image/jpeg;base64,${s.payload}`;
+      parts.push({ type: "image_url", image_url: { url, detail: "high" } });
+    } else if (s.kind === "text" && s.payload) {
+      parts.push({
+        type: "text",
+        text: `\n\n---\nFuente "${s.name || "texto"}":\n${String(s.payload).slice(0, 30_000)}`,
+      });
+    } else if (s.kind === "url" && s.payload) {
+      parts.push({
+        type: "text",
+        text: `\n\n---\nFuente URL "${s.name || s.payload}":\n${String(s.text || "").slice(0, 30_000)}`,
+      });
+    } else if (s.kind === "excel" && s.payload) {
+      parts.push({
+        type: "text",
+        text: `\n\n---\nFuente Excel/CSV "${s.name || "tabla"}" (markdown):\n${String(s.payload).slice(0, 30_000)}`,
+      });
+    }
+  }
+  return parts;
+}
+
+// ---------- Pipeline steps ----------
+
+async function stepExtract(sources: any[], userNotes: string) {
+  const text = `Analiza TODAS las fuentes adjuntas y produce un knowledge brief estructurado en español.
+Incluye: tema central, resumen de 5-10 frases, conceptos clave (con definiciones y ejemplo),
+hechos relevantes, procedimientos paso-a-paso si los detectas, comparaciones si aplican.
+Notas del admin: ${userNotes || "(ninguna)"}
+Llama a build_knowledge_brief con los resultados.`;
+  return await callAi([{ role: "user", content: buildContentParts(sources, text) }], EXTRACT_TOOL, {
+    temperature: 0.4,
+    maxTokens: 8000,
+  });
+}
+
+async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
+  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado en este knowledge brief:
+
+${JSON.stringify(brief).slice(0, 20_000)}
+
+REGLAS:
+- 3 a 8 módulos. 2 a 6 lecciones por módulo.
+- Para cada lección elige el lesson_type ÓPTIMO según la naturaleza del contenido:
+  * "concept" → glosarios / definiciones de términos
+  * "flashcards" → datos a memorizar (pares pregunta/respuesta cortos)
+  * "steps" → procedimientos paso a paso / técnicas
+  * "comparison" → contraste entre opciones
+  * "case_study" → escenarios aplicados con preguntas de reflexión
+  * "interactive_quiz" → mini quiz dentro de la lección
+  * "reading" → explicaciones largas / contexto
+- Varía los tipos: NO uses solo "reading".
+- Notas del admin: ${userNotes || "(ninguna)"}
+- Todo en español.`;
+  return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
+    temperature: 0.5,
+    maxTokens: 8000,
+  });
+}
+
+async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
+  const schemaHint = LESSON_BLOCK_HINTS[lesson.lesson_type] || LESSON_BLOCK_HINTS.reading;
+  const text = `Genera los bloques de contenido para esta lección, en español.
+
+Curso brief: ${JSON.stringify(brief).slice(0, 12_000)}
+Módulo: "${moduleTitle}"
+Lección: "${lesson.title}"
+Tipo: ${lesson.lesson_type}
+Objetivo: ${lesson.objective}
+
+FORMATO REQUERIDO de cada bloque:
+${schemaHint}
+
+Devuelve entre 4 y 10 bloques de calidad, con contenido REAL (no placeholders).`;
+  const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_LESSON_TOOL, {
+    temperature: 0.6,
+    maxTokens: 6000,
+  });
+  return Array.isArray(result?.blocks) ? result.blocks : [];
+}
+
+async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any[]) {
+  const text = `Genera 4-6 preguntas de quiz para el módulo "${moduleTitle}" del curso.
+Brief: ${JSON.stringify(brief).slice(0, 8_000)}
+Lecciones del módulo: ${lessons.map((l) => `"${l.title}"`).join(", ")}
+- Mezcla multiple_choice (4 opciones) y true_false (2 opciones).
+- correct_answer debe coincidir EXACTO con una opción.
+- Todo en español.`;
+  const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_QUIZ_TOOL, {
+    temperature: 0.5,
+    maxTokens: 4000,
+  });
+  return Array.isArray(result?.questions) ? result.questions : [];
+}
+
+const LESSON_BLOCK_HINTS: Record<string, string> = {
+  reading: `{ "type": "heading", "text": "...", "level": 2 } | { "type": "paragraph", "text": "..." } | { "type": "callout", "variant": "info|tip|warning|success", "text": "..." } | { "type": "quote", "text": "...", "cite": "..." }`,
+  concept: `{ "type": "term", "term": "...", "definition": "...", "example": "..." }`,
+  flashcards: `{ "type": "flashcard", "front": "...", "back": "...", "hint": "..." }`,
+  steps: `{ "type": "step", "n": 1, "title": "...", "description": "...", "tip": "..." }`,
+  comparison: `Un solo bloque: { "type": "comparison_table", "headers": ["Aspecto","Opción A","Opción B"], "rows": [{"label":"...","cells":["...","..."]}] }`,
+  case_study: `{ "type": "scenario", "title": "...", "text": "..." } | { "type": "question", "text": "..." } | { "type": "reflection", "text": "..." }`,
+  interactive_quiz: `{ "type": "mc", "question": "...", "options": ["a","b","c","d"], "correct": "a", "explanation": "..." } | { "type": "true_false", "question": "...", "correct": true } | { "type": "fill_blank", "sentence": "El ___ es...", "correct": "..." }`,
+};
+
+// ---------- Legacy single-shot (back-compat) ----------
+
+const LEGACY_TOOL = {
+  type: "function",
+  function: {
+    name: "generate_course_structure",
+    description: "Generates a complete course structure",
+    parameters: {
+      type: "object",
+      required: ["description", "estimated_duration_minutes", "modules"],
+      properties: {
+        description: { type: "string" },
+        estimated_duration_minutes: { type: "number" },
         modules: {
           type: "array",
           items: {
@@ -45,10 +352,7 @@ const TOOL_SCHEMA = {
                         type: "object",
                         required: ["type", "text"],
                         properties: {
-                          type: {
-                            type: "string",
-                            enum: ["heading", "paragraph"],
-                          },
+                          type: { type: "string", enum: ["heading", "paragraph"] },
                           text: { type: "string" },
                         },
                       },
@@ -64,22 +368,11 @@ const TOOL_SCHEMA = {
                     type: "array",
                     items: {
                       type: "object",
-                      required: [
-                        "question_text",
-                        "question_type",
-                        "options",
-                        "correct_answer",
-                      ],
+                      required: ["question_text", "question_type", "options", "correct_answer"],
                       properties: {
                         question_text: { type: "string" },
-                        question_type: {
-                          type: "string",
-                          enum: ["multiple_choice", "true_false"],
-                        },
-                        options: {
-                          type: "array",
-                          items: { type: "string" },
-                        },
+                        question_type: { type: "string", enum: ["multiple_choice", "true_false"] },
+                        options: { type: "array", items: { type: "string" } },
                         correct_answer: { type: "string" },
                       },
                     },
@@ -94,69 +387,185 @@ const TOOL_SCHEMA = {
   },
 };
 
+// ---------- Main handler ----------
+
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const API_KEY = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("OPENAI_API_KEY");
-    if (!API_KEY) {
-      throw new Error("LOVABLE_API_KEY not configured");
+    const body = await req.json();
+    const {
+      // Common
+      title,
+      level = "beginner",
+      companyId,
+      userId,
+      // New API
+      mode, // 'extract' | 'outline' | 'materialize' | undefined (full)
+      sources,
+      userNotes,
+      brief, // for outline+materialize
+      outline, // for materialize
+      // Legacy
+      pdfBase64,
+      imageBase64s,
+      instructions,
+    } = body;
+
+    if (!companyId || !userId) throw new Error("Missing companyId/userId");
+
+    // ----- Mode: extract -----
+    if (mode === "extract") {
+      const out = await stepExtract(sources || [], userNotes || "");
+      return json({ brief: out });
     }
-    const USE_LOVABLE = !!Deno.env.get("LOVABLE_API_KEY");
-    const AI_URL = USE_LOVABLE
-      ? "https://ai.gateway.lovable.dev/v1/chat/completions"
-      : "https://api.openai.com/v1/chat/completions";
-    const AI_MODEL = USE_LOVABLE ? "google/gemini-2.5-pro" : "gpt-4o";
 
-    const { title, instructions, level, pdfBase64, imageBase64s, companyId, userId } =
-      await req.json();
-
-    if (!title || !companyId || !userId) {
-      throw new Error("Missing required fields: title, companyId, userId");
+    // ----- Mode: outline -----
+    if (mode === "outline") {
+      if (!brief) throw new Error("Missing brief");
+      if (!title) throw new Error("Missing title");
+      const out = await stepOutline(brief, title, level, userNotes || "");
+      return json({ outline: out });
     }
 
-    // Build multimodal content
-    const contentParts: any[] = [];
+    // ----- Mode: materialize (full course from approved outline) -----
+    if (mode === "materialize") {
+      if (!brief || !outline || !title) throw new Error("Missing brief/outline/title");
+      const supabase = getServiceClient();
 
-    // System-like instructions in the user message
-    contentParts.push({
-      type: "text",
-      text: `Genera un curso completo y detallado con la siguiente información:
+      const { data: course, error: courseError } = await supabase
+        .from("courses")
+        .insert({
+          title,
+          description: outline.description || "",
+          level,
+          status: "draft",
+          company_id: companyId,
+          created_by: userId,
+          estimated_duration_minutes: outline.estimated_duration_minutes || 30,
+          xp_reward: (outline.modules?.length || 3) * 50,
+          source_brief: brief,
+        })
+        .select("id")
+        .single();
+      if (courseError) throw new Error(`Course insert: ${courseError.message}`);
+      const courseId = course.id;
+
+      // Source trace
+      if (Array.isArray(sources) && sources.length) {
+        const rows = sources.map((s: any) => ({
+          course_id: courseId,
+          company_id: companyId,
+          kind: s.kind,
+          name: s.name || s.kind,
+          metadata: s.metadata ?? null,
+        }));
+        await supabase.from("course_sources").insert(rows);
+      }
+
+      for (let mi = 0; mi < (outline.modules || []).length; mi++) {
+        const mod = outline.modules[mi];
+        const { data: moduleData, error: moduleError } = await supabase
+          .from("modules")
+          .insert({
+            course_id: courseId,
+            title: mod.title,
+            description: mod.description || "",
+            sort_order: mi,
+            xp_reward: 25,
+          })
+          .select("id")
+          .single();
+        if (moduleError) {
+          console.error("Module insert:", moduleError);
+          continue;
+        }
+        const moduleId = moduleData.id;
+
+        for (let li = 0; li < (mod.lessons || []).length; li++) {
+          const lesson = mod.lessons[li];
+          let blocks: any[] = [];
+          try {
+            blocks = await stepMaterializeLesson(brief, mod.title, lesson);
+          } catch (e) {
+            console.error("Lesson materialize failed:", lesson.title, e);
+            blocks = [{ type: "paragraph", text: lesson.objective || "Contenido pendiente." }];
+          }
+          await supabase.from("lessons").insert({
+            module_id: moduleId,
+            title: lesson.title,
+            lesson_type: lesson.lesson_type || "reading",
+            content: { blocks },
+            content_type: "text",
+            sort_order: li,
+            xp_reward: 10,
+          });
+        }
+
+        // Quiz per module
+        try {
+          const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
+          if (questions.length) {
+            const { data: quizData, error: quizError } = await supabase
+              .from("quizzes")
+              .insert({
+                module_id: moduleId,
+                title: `Quiz: ${mod.title}`,
+                passing_score: 70,
+                max_attempts: 3,
+                xp_reward: 25,
+              })
+              .select("id")
+              .single();
+            if (!quizError && quizData) {
+              for (let qi = 0; qi < questions.length; qi++) {
+                const q = questions[qi];
+                await supabase.from("questions").insert({
+                  quiz_id: quizData.id,
+                  question_text: q.question_text,
+                  question_type: q.question_type || "multiple_choice",
+                  options: q.options || [],
+                  correct_answer: q.correct_answer,
+                  sort_order: qi,
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Quiz materialize failed:", mod.title, e);
+        }
+      }
+
+      return json({ courseId, modulesCount: outline.modules?.length || 0 });
+    }
+
+    // ----- LEGACY single-shot (back-compat) -----
+    if (!title) throw new Error("Missing title");
+    const legacyParts: any[] = [
+      {
+        type: "text",
+        text: `Genera un curso completo y detallado con la siguiente información:
 
 Título del curso: ${title}
-Nivel: ${level || "beginner"}
+Nivel: ${level}
 Instrucciones adicionales: ${instructions || "Genera un curso completo y bien estructurado."}
 
-REGLAS IMPORTANTES:
-- Genera entre 3 y 8 módulos según la complejidad del tema.
-- Cada módulo debe tener entre 2 y 5 lecciones.
-- Cada lección debe tener contenido educativo real y sustancial (mínimo 3-5 bloques de contenido).
-- Usa bloques "heading" para títulos de sección y "paragraph" para el contenido explicativo.
-- Los párrafos deben ser informativos, con ejemplos prácticos cuando sea posible.
-- Cada módulo debe tener un quiz con 3-5 preguntas relevantes.
-- Las preguntas deben tener 4 opciones para multiple_choice o 2 para true_false.
-- El correct_answer debe coincidir exactamente con una de las opciones.
-- Todo el contenido debe estar en español.
-- Usa la función generate_course_structure para devolver la estructura.`,
-    });
-
-    // Add PDF if provided
+REGLAS:
+- 3 a 8 módulos, 2 a 5 lecciones por módulo, 3-5 bloques por lección.
+- Bloques tipo "heading" y "paragraph" en español.
+- Cada módulo con quiz de 3-5 preguntas (multiple_choice 4 opciones o true_false).
+- Usa la función generate_course_structure.`,
+      },
+    ];
     if (pdfBase64) {
-      contentParts.push({
+      legacyParts.push({
         type: "image_url",
-        image_url: {
-          url: `data:application/pdf;base64,${pdfBase64}`,
-          detail: "high",
-        },
+        image_url: { url: `data:application/pdf;base64,${pdfBase64}`, detail: "high" },
       });
     }
-
-    // Add images if provided
-    if (imageBase64s && Array.isArray(imageBase64s)) {
+    if (Array.isArray(imageBase64s)) {
       for (const img of imageBase64s) {
-        contentParts.push({
+        legacyParts.push({
           type: "image_url",
           image_url: {
             url: img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`,
@@ -165,91 +574,32 @@ REGLAS IMPORTANTES:
         });
       }
     }
-
-    console.log(`Calling AI API with ${AI_MODEL}...`);
-
-    const openaiResponse = await fetch(
-      AI_URL,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: AI_MODEL,
-          messages: [
-            {
-              role: "user",
-              content: contentParts,
-            },
-          ],
-          tools: [TOOL_SCHEMA],
-          tool_choice: {
-            type: "function",
-            function: { name: "generate_course_structure" },
-          },
-          temperature: 0.7,
-          max_tokens: 16000,
-        }),
-      }
+    const courseStructure = await callAi(
+      [{ role: "user", content: legacyParts }],
+      LEGACY_TOOL,
+      { temperature: 0.7, maxTokens: 16000 },
     );
 
-    if (!openaiResponse.ok) {
-      const errorBody = await openaiResponse.text();
-      console.error("OpenAI API error:", openaiResponse.status, errorBody);
-      throw new Error(
-        `OpenAI API error (${openaiResponse.status}): ${errorBody}`
-      );
-    }
-
-    const openaiData = await openaiResponse.json();
-    const toolCall = openaiData.choices?.[0]?.message?.tool_calls?.[0];
-
-    if (!toolCall || toolCall.function.name !== "generate_course_structure") {
-      throw new Error("OpenAI did not return expected tool call");
-    }
-
-    const courseStructure = JSON.parse(toolCall.function.arguments);
-    console.log(
-      "Course structure generated:",
-      courseStructure.modules?.length,
-      "modules"
-    );
-
-    // Insert into Supabase using service role
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // 1. Create the course
+    const supabase = getServiceClient();
     const { data: course, error: courseError } = await supabase
       .from("courses")
       .insert({
         title,
         description: courseStructure.description || "",
-        level: level || "beginner",
+        level,
         status: "draft",
         company_id: companyId,
         created_by: userId,
-        estimated_duration_minutes:
-          courseStructure.estimated_duration_minutes || 30,
+        estimated_duration_minutes: courseStructure.estimated_duration_minutes || 30,
         xp_reward: (courseStructure.modules?.length || 3) * 50,
       })
       .select("id")
       .single();
-
-    if (courseError) {
-      console.error("Course insert error:", courseError);
-      throw new Error(`Failed to create course: ${courseError.message}`);
-    }
-
+    if (courseError) throw new Error(`Course insert: ${courseError.message}`);
     const courseId = course.id;
 
-    // 2. Insert modules, lessons, quizzes, questions
     for (let mi = 0; mi < courseStructure.modules.length; mi++) {
       const mod = courseStructure.modules[mi];
-
       const { data: moduleData, error: moduleError } = await supabase
         .from("modules")
         .insert({
@@ -261,16 +611,10 @@ REGLAS IMPORTANTES:
         })
         .select("id")
         .single();
-
-      if (moduleError) {
-        console.error("Module insert error:", moduleError);
-        continue;
-      }
-
+      if (moduleError) continue;
       const moduleId = moduleData.id;
 
-      // Insert lessons
-      if (mod.lessons && Array.isArray(mod.lessons)) {
+      if (Array.isArray(mod.lessons)) {
         for (let li = 0; li < mod.lessons.length; li++) {
           const lesson = mod.lessons[li];
           await supabase.from("lessons").insert({
@@ -284,8 +628,7 @@ REGLAS IMPORTANTES:
         }
       }
 
-      // Insert quiz
-      if (mod.quiz && mod.quiz.questions?.length > 0) {
+      if (mod.quiz?.questions?.length > 0) {
         const { data: quizData, error: quizError } = await supabase
           .from("quizzes")
           .insert({
@@ -297,7 +640,6 @@ REGLAS IMPORTANTES:
           })
           .select("id")
           .single();
-
         if (!quizError && quizData) {
           for (let qi = 0; qi < mod.quiz.questions.length; qi++) {
             const q = mod.quiz.questions[qi];
@@ -314,21 +656,24 @@ REGLAS IMPORTANTES:
       }
     }
 
-    console.log("Course created successfully:", courseId);
-
-    return new Response(
-      JSON.stringify({ courseId, modulesCount: courseStructure.modules.length }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({ courseId, modulesCount: courseStructure.modules.length });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("Error:", message);
-    return new Response(
-      JSON.stringify({ error: message }),
-      {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    console.error("generate-course error:", message);
+    return new Response(JSON.stringify({ error: message }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
+
+function getServiceClient() {
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  return createClient(url, key);
+}
+function json(payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
