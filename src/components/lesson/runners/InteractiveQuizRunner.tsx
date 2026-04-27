@@ -178,6 +178,7 @@ function MultipleChoice({ block, idx }: { block: Extract<InteractiveQuizBlock, {
   const [value, setValue] = useState("");
   const correct = value === block.correct;
   const reporter = useMistakeReporter("mc", block.question, block.correct, block.explanation);
+  useAutoMistake(submitted && !correct, () => reporter.autoMark(value));
 
   return (
     <ItemShell
@@ -226,6 +227,7 @@ function TrueFalse({ block, idx }: { block: Extract<InteractiveQuizBlock, { type
   const correct = (value === "true") === block.correct;
   const correctText = block.correct ? "Verdadero" : "Falso";
   const reporter = useMistakeReporter("true_false", block.question, correctText, block.explanation);
+  useAutoMistake(submitted && !correct, () => reporter.autoMark(value === "true" ? "Verdadero" : "Falso"));
 
   return (
     <ItemShell
@@ -284,6 +286,7 @@ function FillBlank({ block, idx }: { block: Extract<InteractiveQuizBlock, { type
 
   const correctText = correctArr.join(" / ");
   const reporter = useMistakeReporter("fill_blank", block.sentence, correctText, block.explanation);
+  useAutoMistake(submitted && !allCorrect, () => reporter.autoMark(values.join(" / ")));
 
   // Renderiza la frase con inputs en cada hueco
   const parts = block.sentence.split(/_+/g);
