@@ -8,7 +8,7 @@ import {
   Sparkles, Rocket, Brain, MessageSquare, ChevronDown, Quote
 } from "lucide-react";
 import { KibboMascot } from "@/components/KibboMascot";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import kibboLogo from "@/assets/kibbo-mascot.png";
 import { NumberTicker } from "@/components/magic/NumberTicker";
 import { BorderBeam } from "@/components/magic/BorderBeam";
