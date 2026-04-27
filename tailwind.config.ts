@@ -145,6 +145,22 @@ export default {
           "65%, 85%": { transform: "translateZ(0) rotate(270deg)" },
           "100%": { transform: "translateZ(0) rotate(360deg)" },
         },
+        "aurora": {
+          "0%, 100%": { transform: "translate(-10%, -10%) rotate(0deg) scale(1)" },
+          "50%": { transform: "translate(10%, 10%) rotate(180deg) scale(1.2)" },
+        },
+        "marquee": {
+          "0%": { transform: "translateX(0)" },
+          "100%": { transform: "translateX(-50%)" },
+        },
+        "grid-fade": {
+          "0%, 100%": { opacity: "0.04" },
+          "50%": { opacity: "0.08" },
+        },
+        "tilt": {
+          "0%, 100%": { transform: "rotate(-1deg)" },
+          "50%": { transform: "rotate(1deg)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
