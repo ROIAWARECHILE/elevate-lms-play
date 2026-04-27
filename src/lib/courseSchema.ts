@@ -164,6 +164,7 @@ export const LESSON_TYPE_META: Record<
   case_study: { label: "Caso práctico", icon: "Briefcase", description: "Escenario aplicado con preguntas" },
   interactive_quiz: { label: "Práctica", icon: "Brain", description: "Mini-ejercicios interactivos tipo Duolingo" },
   video_embed: { label: "Video", icon: "Video", description: "Video externo embebido" },
+  sop_walkthrough: { label: "Procedimiento", icon: "ClipboardCheck", description: "Paso a paso operativo con tildes obligatorias" },
 };
 
 export function getLessonTypeMeta(type?: string | null) {
