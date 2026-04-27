@@ -7,11 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, PlusCircle, GripVertical, Trash2, Brain, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, PlusCircle, GripVertical, Trash2, Brain, Sparkles, Wand2, Shuffle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { LESSON_TYPE_META, type LessonType } from "@/lib/courseSchema";
 import { LessonRenderer } from "@/components/lesson/LessonRenderer";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Question {
   id?: string;
