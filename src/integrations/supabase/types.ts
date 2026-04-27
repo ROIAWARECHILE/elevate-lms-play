@@ -55,34 +55,52 @@ export type Database = {
       }
       companies: {
         Row: {
+          contact_email: string | null
+          country: string | null
           created_at: string
+          description: string | null
           id: string
+          industry: string | null
           invite_code: string
           logo_url: string | null
           name: string
           primary_color: string | null
+          size: string | null
           slug: string
           updated_at: string
+          website: string | null
         }
         Insert: {
+          contact_email?: string | null
+          country?: string | null
           created_at?: string
+          description?: string | null
           id?: string
+          industry?: string | null
           invite_code?: string
           logo_url?: string | null
           name: string
           primary_color?: string | null
+          size?: string | null
           slug: string
           updated_at?: string
+          website?: string | null
         }
         Update: {
+          contact_email?: string | null
+          country?: string | null
           created_at?: string
+          description?: string | null
           id?: string
+          industry?: string | null
           invite_code?: string
           logo_url?: string | null
           name?: string
           primary_color?: string | null
+          size?: string | null
           slug?: string
           updated_at?: string
+          website?: string | null
         }
         Relationships: []
       }
@@ -803,10 +821,23 @@ export type Database = {
     }
     Functions: {
       approve_user: { Args: { _target_user_id: string }; Returns: undefined }
-      create_company_for_user: {
-        Args: { _name: string; _slug: string }
-        Returns: string
-      }
+      create_company_for_user:
+        | { Args: { _name: string; _slug: string }; Returns: string }
+        | {
+            Args: {
+              _contact_email?: string
+              _country?: string
+              _description?: string
+              _industry?: string
+              _logo_url?: string
+              _name: string
+              _primary_color?: string
+              _size?: string
+              _slug: string
+              _website?: string
+            }
+            Returns: string
+          }
       ensure_daily_quests: {
         Args: never
         Returns: {
