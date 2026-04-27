@@ -86,6 +86,44 @@ export type Database = {
         }
         Relationships: []
       }
+      course_sources: {
+        Row: {
+          company_id: string
+          course_id: string
+          created_at: string
+          id: string
+          kind: string
+          metadata: Json | null
+          name: string
+        }
+        Insert: {
+          company_id: string
+          course_id: string
+          created_at?: string
+          id?: string
+          kind: string
+          metadata?: Json | null
+          name: string
+        }
+        Update: {
+          company_id?: string
+          course_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          metadata?: Json | null
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_sources_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       courses: {
         Row: {
           company_id: string
@@ -97,6 +135,7 @@ export type Database = {
           id: string
           is_mandatory: boolean
           level: Database["public"]["Enums"]["course_level"]
+          source_brief: Json | null
           status: Database["public"]["Enums"]["course_status"]
           title: string
           updated_at: string
@@ -112,6 +151,7 @@ export type Database = {
           id?: string
           is_mandatory?: boolean
           level?: Database["public"]["Enums"]["course_level"]
+          source_brief?: Json | null
           status?: Database["public"]["Enums"]["course_status"]
           title: string
           updated_at?: string
@@ -127,6 +167,7 @@ export type Database = {
           id?: string
           is_mandatory?: boolean
           level?: Database["public"]["Enums"]["course_level"]
+          source_brief?: Json | null
           status?: Database["public"]["Enums"]["course_status"]
           title?: string
           updated_at?: string
@@ -187,6 +228,7 @@ export type Database = {
           content_type: string
           created_at: string
           id: string
+          lesson_type: string
           module_id: string
           sort_order: number
           title: string
@@ -197,6 +239,7 @@ export type Database = {
           content_type?: string
           created_at?: string
           id?: string
+          lesson_type?: string
           module_id: string
           sort_order?: number
           title: string
@@ -207,6 +250,7 @@ export type Database = {
           content_type?: string
           created_at?: string
           id?: string
+          lesson_type?: string
           module_id?: string
           sort_order?: number
           title?: string

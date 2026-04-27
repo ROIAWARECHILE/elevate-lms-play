@@ -7,8 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, PlusCircle, GripVertical, Trash2, Brain } from "lucide-react";
+import { ArrowLeft, Loader2, PlusCircle, GripVertical, Trash2, Brain, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
+import { LESSON_TYPE_META, type LessonType } from "@/lib/courseSchema";
+import { LessonRenderer } from "@/components/lesson/LessonRenderer";
 
 interface Question {
   id?: string;
@@ -34,6 +37,7 @@ interface Lesson {
   content_type: string;
   content: any;
   sort_order: number;
+  lesson_type?: LessonType;
 }
 
 interface Module {
@@ -112,6 +116,14 @@ export default function EditCourse() {
     const updated = [...modules];
     updated[mi].lessons[li] = { ...updated[mi].lessons[li], title, content: { text: content } };
     setModules(updated);
+  };
+
+  const updateLessonType = async (lessonId: string, newType: LessonType, mi: number, li: number) => {
+    await supabase.from("lessons").update({ lesson_type: newType } as any).eq("id", lessonId);
+    const updated = [...modules];
+    updated[mi].lessons[li] = { ...updated[mi].lessons[li], lesson_type: newType };
+    setModules(updated);
+    toast({ title: "Tipo actualizado", description: LESSON_TYPE_META[newType].label });
   };
 
   const deleteLesson = async (lessonId: string, mi: number, li: number) => {
@@ -234,27 +246,71 @@ export default function EditCourse() {
             </CardHeader>
             <CardContent className="space-y-3">
               {/* Lessons */}
-              {mod.lessons.map((lesson, li) => (
-                <div key={lesson.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={lesson.title}
-                      onChange={(e) => updateLesson(lesson.id, e.target.value, lesson.content?.text || "", mi, li)}
-                      className="font-medium"
-                      placeholder="Título de la lección"
-                    />
-                    <Button variant="ghost" size="icon" onClick={() => deleteLesson(lesson.id, mi, li)}>
-                      <Trash2 className="w-4 h-4 text-destructive" />
-                    </Button>
+              {mod.lessons.map((lesson, li) => {
+                const lessonType = (lesson.lesson_type || "reading") as LessonType;
+                const isReading = lessonType === "reading";
+                const hasBlocks = Array.isArray(lesson.content?.blocks) && lesson.content.blocks.length > 0;
+                return (
+                  <div key={lesson.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={lesson.title}
+                        onChange={(e) => updateLesson(lesson.id, e.target.value, lesson.content?.text || "", mi, li)}
+                        className="font-medium"
+                        placeholder="Título de la lección"
+                      />
+                      <Select
+                        value={lessonType}
+                        onValueChange={(v) => updateLessonType(lesson.id, v as LessonType, mi, li)}
+                      >
+                        <SelectTrigger className="w-44 h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Object.keys(LESSON_TYPE_META) as LessonType[]).map((t) => (
+                            <SelectItem key={t} value={t}>
+                              {LESSON_TYPE_META[t].label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button variant="ghost" size="icon" onClick={() => deleteLesson(lesson.id, mi, li)}>
+                        <Trash2 className="w-4 h-4 text-destructive" />
+                      </Button>
+                    </div>
+
+                    {isReading ? (
+                      <Textarea
+                        value={lesson.content?.text || ""}
+                        onChange={(e) => updateLesson(lesson.id, lesson.title, e.target.value, mi, li)}
+                        placeholder="Contenido de la lección..."
+                        rows={3}
+                      />
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-border bg-background p-3 space-y-2">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Sparkles className="w-3.5 h-3.5 text-accent" />
+                          <span>
+                            <Badge variant="secondary" className="text-[10px] h-5 mr-1">
+                              {LESSON_TYPE_META[lessonType].label}
+                            </Badge>
+                            {LESSON_TYPE_META[lessonType].description}
+                          </span>
+                        </div>
+                        {hasBlocks ? (
+                          <div className="max-h-72 overflow-y-auto rounded-md bg-card p-3">
+                            <LessonRenderer lesson={lesson} />
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground italic">
+                            Sin bloques. Genera esta lección desde Course Studio (próximamente) o cambia el tipo a "Lectura" para editarla como texto.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <Textarea
-                    value={lesson.content?.text || ""}
-                    onChange={(e) => updateLesson(lesson.id, lesson.title, e.target.value, mi, li)}
-                    placeholder="Contenido de la lección..."
-                    rows={3}
-                  />
-                </div>
-              ))}
+                );
+              })}
               <Button variant="outline" size="sm" onClick={() => addLesson(mod.id, mi)}>
                 <PlusCircle className="w-4 h-4 mr-1" /> Agregar lección
               </Button>
