@@ -17,12 +17,17 @@ interface UserStats {
   xp_total: number;
   level: number;
   courses_completed: number;
+  // PR7 — adaptive/SRS
+  srs_strong: number;     // tarjetas con strength >= 0.8
+  srs_reviews: number;    // total reviews acumuladas
+  correct_streak: number; // máxima racha consecutiva de aciertos en SRS
 }
 
 async function fetchStats(userId: string): Promise<UserStats> {
-  const [progressRes, profileRes] = await Promise.all([
+  const [progressRes, profileRes, srsRes] = await Promise.all([
     supabase.from("user_progress").select("lesson_id, quiz_id, score, course_id, completed").eq("user_id", userId).eq("completed", true),
     supabase.from("profiles").select("current_streak, xp_total, level").eq("id", userId).single(),
+    supabase.from("srs_items").select("strength, total_reviews, total_correct").eq("user_id", userId),
   ]);
 
   const rows = progressRes.data ?? [];
