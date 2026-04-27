@@ -461,8 +461,9 @@ Deno.serve(async (req) => {
       return json({ outline: out });
     }
 
-    // ----- Mode: materialize (full course from approved outline) -----
-    if (mode === "materialize") {
+    // ----- Mode: materialize_init (creates course shell + empty modules) -----
+    // Splits the heavy work so each invocation stays under the edge CPU limit.
+    if (mode === "materialize_init") {
       if (!brief || !outline || !title) throw new Error("Missing brief/outline/title");
       const supabase = getServiceClient();
 
@@ -484,7 +485,6 @@ Deno.serve(async (req) => {
       if (courseError) throw new Error(`Course insert: ${courseError.message}`);
       const courseId = course.id;
 
-      // Source trace
       if (Array.isArray(sources) && sources.length) {
         const rows = sources.map((s: any) => ({
           course_id: courseId,
@@ -496,6 +496,7 @@ Deno.serve(async (req) => {
         await supabase.from("course_sources").insert(rows);
       }
 
+      const moduleIds: string[] = [];
       for (let mi = 0; mi < (outline.modules || []).length; mi++) {
         const mod = outline.modules[mi];
         const { data: moduleData, error: moduleError } = await supabase
@@ -511,65 +512,92 @@ Deno.serve(async (req) => {
           .single();
         if (moduleError) {
           console.error("Module insert:", moduleError);
+          moduleIds.push("");
           continue;
         }
-        const moduleId = moduleData.id;
-
-        for (let li = 0; li < (mod.lessons || []).length; li++) {
-          const lesson = mod.lessons[li];
-          let blocks: any[] = [];
-          try {
-            blocks = await stepMaterializeLesson(brief, mod.title, lesson);
-          } catch (e) {
-            console.error("Lesson materialize failed:", lesson.title, e);
-            blocks = [{ type: "paragraph", text: lesson.objective || "Contenido pendiente." }];
-          }
-          await supabase.from("lessons").insert({
-            module_id: moduleId,
-            title: lesson.title,
-            lesson_type: lesson.lesson_type || "reading",
-            content: { blocks },
-            content_type: "text",
-            sort_order: li,
-            xp_reward: 10,
-          });
-        }
-
-        // Quiz per module
-        try {
-          const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
-          if (questions.length) {
-            const { data: quizData, error: quizError } = await supabase
-              .from("quizzes")
-              .insert({
-                module_id: moduleId,
-                title: `Quiz: ${mod.title}`,
-                passing_score: 70,
-                max_attempts: 3,
-                xp_reward: 25,
-              })
-              .select("id")
-              .single();
-            if (!quizError && quizData) {
-              for (let qi = 0; qi < questions.length; qi++) {
-                const q = questions[qi];
-                await supabase.from("questions").insert({
-                  quiz_id: quizData.id,
-                  question_text: q.question_text,
-                  question_type: q.question_type || "multiple_choice",
-                  options: q.options || [],
-                  correct_answer: q.correct_answer,
-                  sort_order: qi,
-                });
-              }
-            }
-          }
-        } catch (e) {
-          console.error("Quiz materialize failed:", mod.title, e);
-        }
+        moduleIds.push(moduleData.id);
       }
 
-      return json({ courseId, modulesCount: outline.modules?.length || 0 });
+      return json({ courseId, moduleIds, modulesCount: moduleIds.length });
+    }
+
+    // ----- Mode: materialize_module (one module: lessons in parallel + quiz) -----
+    if (mode === "materialize_module") {
+      const { moduleId, moduleIndex } = body;
+      if (!brief || !outline || !moduleId) throw new Error("Missing brief/outline/moduleId");
+      const mod = outline.modules?.[moduleIndex];
+      if (!mod) throw new Error("Module index out of range");
+      const supabase = getServiceClient();
+
+      // Run all lesson generations in parallel (bounded by AI gateway concurrency).
+      const lessonResults = await Promise.all(
+        (mod.lessons || []).map(async (lesson: any) => {
+          try {
+            const blocks = await stepMaterializeLesson(brief, mod.title, lesson);
+            return { lesson, blocks };
+          } catch (e) {
+            console.error("Lesson materialize failed:", lesson.title, e);
+            return {
+              lesson,
+              blocks: [{ type: "paragraph", text: lesson.objective || "Contenido pendiente." }],
+            };
+          }
+        }),
+      );
+
+      // Insert lessons sequentially (cheap DB ops, preserves order).
+      for (let li = 0; li < lessonResults.length; li++) {
+        const { lesson, blocks } = lessonResults[li];
+        await supabase.from("lessons").insert({
+          module_id: moduleId,
+          title: lesson.title,
+          lesson_type: lesson.lesson_type || "reading",
+          content: { blocks },
+          content_type: "text",
+          sort_order: li,
+          xp_reward: 10,
+        });
+      }
+
+      // Quiz per module (separate AI call, but module already done so safe).
+      try {
+        const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
+        if (questions.length) {
+          const { data: quizData, error: quizError } = await supabase
+            .from("quizzes")
+            .insert({
+              module_id: moduleId,
+              title: `Quiz: ${mod.title}`,
+              passing_score: 70,
+              max_attempts: 3,
+              xp_reward: 25,
+            })
+            .select("id")
+            .single();
+          if (!quizError && quizData) {
+            const qRows = questions.map((q: any, qi: number) => ({
+              quiz_id: quizData.id,
+              question_text: q.question_text,
+              question_type: q.question_type || "multiple_choice",
+              options: q.options || [],
+              correct_answer: q.correct_answer,
+              sort_order: qi,
+            }));
+            await supabase.from("questions").insert(qRows);
+          }
+        }
+      } catch (e) {
+        console.error("Quiz materialize failed:", mod.title, e);
+      }
+
+      return json({ ok: true, moduleId, lessons: lessonResults.length });
+    }
+
+    // ----- Legacy single-shot materialize (kept for back-compat, NOT recommended). -----
+    if (mode === "materialize") {
+      throw new Error(
+        "Legacy 'materialize' mode disabled to avoid CPU limits. Use 'materialize_init' + 'materialize_module' chunks.",
+      );
     }
 
     // ----- LEGACY single-shot (back-compat) -----
