@@ -17,6 +17,9 @@ import { LessonSkeleton } from "@/components/SkeletonLoaders";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { fireSchool, fireFromButton } from "@/lib/celebrate";
 import { evaluateAchievements, type UnlockedAchievement } from "@/lib/achievements";
+import { LessonRenderer } from "@/components/lesson/LessonRenderer";
+import { getLessonTypeMeta } from "@/lib/courseSchema";
+import { Badge } from "@/components/ui/badge";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -152,35 +155,19 @@ export default function LessonView() {
         <Card className="shadow-card">
           <CardContent className="p-8">
             <div className="mb-6">
-              <p className="text-xs text-muted-foreground mb-1">{lesson?.modules?.title}</p>
+              <div className="flex items-center gap-2 mb-1">
+                <p className="text-xs text-muted-foreground">{lesson?.modules?.title}</p>
+                {lesson?.lesson_type && lesson.lesson_type !== "reading" && (
+                  <Badge variant="secondary" className="text-[10px] h-5">
+                    {getLessonTypeMeta(lesson.lesson_type).label}
+                  </Badge>
+                )}
+              </div>
               <h1 className="text-2xl font-bold">{lesson?.title}</h1>
             </div>
 
-            <div className="prose prose-sm max-w-none mb-8">
-              {lesson?.content?.blocks && Array.isArray(lesson.content.blocks) && lesson.content.blocks.length > 0 ? (
-                lesson.content.blocks.map((block: any, idx: number) => (
-                  <motion.div
-                    key={idx}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 + idx * 0.05 }}
-                  >
-                    {block.type === "heading" ? (
-                      <h3 className="text-lg font-bold text-foreground mt-4 mb-2">{block.text}</h3>
-                    ) : (
-                      <p className="text-foreground leading-relaxed mb-3">{block.text}</p>
-                    )}
-                  </motion.div>
-                ))
-              ) : lesson?.content?.text ? (
-                <div className="whitespace-pre-wrap text-foreground leading-relaxed">
-                  {lesson.content.text}
-                </div>
-              ) : (
-                <p className="text-muted-foreground italic">
-                  Esta lección no tiene contenido todavía.
-                </p>
-              )}
+            <div className="mb-8">
+              <LessonRenderer lesson={lesson} />
             </div>
 
             {completed ? (
