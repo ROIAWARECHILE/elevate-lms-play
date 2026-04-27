@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Target, BookOpen, Zap, CheckCircle2, Trophy, Loader2 } from "lucide-react";
+import { Target, BookOpen, Zap, CheckCircle2, Trophy, Loader2, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fireFromButton } from "@/lib/celebrate";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +22,7 @@ const QUEST_META: Record<string, { label: string; icon: any; color: string; bg: 
   lessons: { label: "Completa lecciones", icon: BookOpen, color: "text-primary", bg: "bg-primary/10" },
   xp: { label: "Gana XP", icon: Zap, color: "text-xp", bg: "bg-xp/10" },
   quiz: { label: "Aprueba un quiz", icon: Trophy, color: "text-success", bg: "bg-success/10" },
+  srs: { label: "Repasa tarjetas", icon: Brain, color: "text-accent", bg: "bg-accent/10" },
 };
 
 export function DailyQuestsWidget() {

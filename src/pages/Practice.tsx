@@ -121,6 +121,13 @@ export default function Practice() {
           _quest_type: "xp",
           _amount: xpEarned,
         });
+        // Cada sesión completada cuenta como progreso en la misión SRS
+        try {
+          await supabase.rpc("increment_quest_progress", {
+            _quest_type: "srs",
+            _amount: Math.max(1, Math.round(xpEarned / 5)),
+          });
+        } catch { /* ignore */ }
         playXp();
         await refreshProfile();
       } catch (e) {
