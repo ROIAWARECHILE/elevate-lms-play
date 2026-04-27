@@ -80,7 +80,11 @@ export default function LessonView() {
         return;
       }
 
-      const xpReward = lesson.xp_reward || 10;
+      // PR7 — XP por aprendizaje real: bonus ×1.5 si la lección es retrieval (interactive_quiz)
+      const baseXp = lesson.xp_reward || 10;
+      const xpReward = lesson.lesson_type === "interactive_quiz"
+        ? Math.round(baseXp * 1.5)
+        : baseXp;
 
       await supabase.from("user_progress").insert({
         user_id: user.id,
