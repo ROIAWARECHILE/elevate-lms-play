@@ -18,6 +18,7 @@ import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
 import CreateCourse from "./pages/admin/CreateCourse";
 import GenerateCourse from "./pages/admin/GenerateCourse";
+import CourseStudio from "./pages/admin/CourseStudio";
 import EditCourse from "./pages/admin/EditCourse";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
@@ -56,6 +57,7 @@ const App = () => (
               <Route path="admin/courses" element={<AdminCourses />} />
               <Route path="admin/courses/new" element={<CreateCourse />} />
               <Route path="admin/courses/generate" element={<GenerateCourse />} />
+              <Route path="admin/courses/studio" element={<CourseStudio />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />
               <Route path="admin/users" element={<AdminUsers />} />
               <Route path="admin/analytics" element={<AdminAnalytics />} />

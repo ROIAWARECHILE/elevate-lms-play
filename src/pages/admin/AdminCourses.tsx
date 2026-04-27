@@ -70,9 +70,14 @@ export default function AdminCourses() {
               <PlusCircle className="w-4 h-4 mr-2" /> Crear curso
             </Link>
           </Button>
-          <Button asChild className="gradient-primary shadow-primary">
+          <Button asChild variant="outline">
             <Link to="/app/admin/courses/generate">
-              <Sparkles className="w-4 h-4 mr-2" /> Generar con IA
+              <Sparkles className="w-4 h-4 mr-2" /> Generar rápido
+            </Link>
+          </Button>
+          <Button asChild className="gradient-primary shadow-primary">
+            <Link to="/app/admin/courses/studio">
+              <Sparkles className="w-4 h-4 mr-2" /> Course Studio
             </Link>
           </Button>
         </div>
