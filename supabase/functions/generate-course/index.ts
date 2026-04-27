@@ -141,6 +141,7 @@ const OUTLINE_TOOL = {
                       enum: [
                         "reading", "concept", "flashcards", "steps",
                         "comparison", "case_study", "interactive_quiz",
+                        "sop_walkthrough",
                       ],
                     },
                   },
@@ -250,23 +251,32 @@ Llama a build_knowledge_brief con los resultados.`;
 }
 
 async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
-  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado en este knowledge brief:
+  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado en este knowledge brief, aplicando principios pedagógicos demostrados (microlearning, retrieval practice, learning by doing, multimodal):
 
 ${JSON.stringify(brief).slice(0, 20_000)}
 
-REGLAS:
-- 3 a 8 módulos. 2 a 6 lecciones por módulo.
-- Para cada lección elige el lesson_type ÓPTIMO según la naturaleza del contenido:
-  * "concept" → glosarios / definiciones de términos
-  * "flashcards" → datos a memorizar (pares pregunta/respuesta cortos)
-  * "steps" → procedimientos paso a paso / técnicas
-  * "comparison" → contraste entre opciones
-  * "case_study" → escenarios aplicados con preguntas de reflexión
-  * "interactive_quiz" → mini quiz dentro de la lección
-  * "reading" → explicaciones largas / contexto
-- Varía los tipos: NO uses solo "reading".
+REGLAS PEDAGÓGICAS (OBLIGATORIO):
+- 3 a 8 módulos. **4 a 6 lecciones por módulo**.
+- **Microlearning**: cada lección debe poder completarse en ≤ 5 minutos. Si un tema es grande, divídelo.
+- **Mix obligatorio por módulo** (en este orden lógico):
+   1. Una lección "concept" para introducir términos (vocabulario)
+   2. Una lección "reading" o "steps" para dar contexto/procedimiento
+   3. Una lección "interactive_quiz" para retrieval practice (≥ 5 ejercicios variados)
+   4. (Recomendado) Una lección "case_study" o "sop_walkthrough" para aplicación
+   5. (Opcional) Una lección "flashcards" o "comparison" para refuerzo
+- **Variedad obligatoria**: NO uses el mismo lesson_type 2+ veces seguidas dentro del mismo módulo.
+- Asigna lesson_type según naturaleza:
+   * "concept" → glosarios / definiciones
+   * "flashcards" → datos a memorizar (par corto)
+   * "steps" → técnica/procedimiento general
+   * "sop_walkthrough" → procedimiento operativo crítico (con riesgos / debe confirmarse paso a paso)
+   * "comparison" → contraste de opciones
+   * "case_study" → escenarios aplicados con preguntas
+   * "interactive_quiz" → mini-ejercicios retrieval
+   * "reading" → SOLO si nada de lo anterior aplica (úsalo poco)
+- Cada lección debe tener un "objective" claro (1 frase: qué sabrá el alumno).
 - Notas del admin: ${userNotes || "(ninguna)"}
-- Todo en español.`;
+- Todo en español neutro, tono profesional pero cercano (adultos en empresa).`;
   return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
     temperature: 0.5,
     maxTokens: 8000,
@@ -275,13 +285,24 @@ REGLAS:
 
 async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
   const schemaHint = LESSON_BLOCK_HINTS[lesson.lesson_type] || LESSON_BLOCK_HINTS.reading;
-  const text = `Genera los bloques de contenido para esta lección, en español.
+  const text = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
 
 Curso brief: ${JSON.stringify(brief).slice(0, 12_000)}
 Módulo: "${moduleTitle}"
 Lección: "${lesson.title}"
 Tipo: ${lesson.lesson_type}
 Objetivo: ${lesson.objective}
+
+REGLAS DE CALIDAD (OBLIGATORIO):
+- Microlearning: el conjunto de bloques debe leerse/completarse en ≤ 5 minutos (≈ ≤ 300 palabras + ejercicios cortos).
+- Concreto y aplicable: cero relleno, cero genéricos. Usa datos reales del brief.
+- Para preguntas (mc / true_false / fill_blank): SIEMPRE incluye un campo "explanation" útil que:
+   1) Explique POR QUÉ la opción correcta es correcta
+   2) Mencione el error común si aplica
+   3) Termine con un mini-tip de memoria ("Recuerda: ...")
+- En "mc" los distractores deben ser PLAUSIBLES (no obvios ni absurdos). Mismo registro que la correcta.
+- Variedad: dentro de un interactive_quiz no uses el mismo tipo más de 2 veces seguidas.
+- En "sop_walkthrough" cada paso CRÍTICO debe llevar "warning" cuando hay riesgo y "must_check": true.
 
 FORMATO REQUERIDO de cada bloque:
 ${schemaHint}
@@ -315,14 +336,19 @@ const LESSON_BLOCK_HINTS: Record<string, string> = {
   steps: `{ "type": "step", "n": 1, "title": "...", "description": "...", "tip": "..." }`,
   comparison: `Un solo bloque: { "type": "comparison_table", "headers": ["Aspecto","Opción A","Opción B"], "rows": [{"label":"...","cells":["...","..."]}] }`,
   case_study: `{ "type": "scenario", "title": "...", "text": "..." } | { "type": "question", "text": "..." } | { "type": "reflection", "text": "..." }`,
-  interactive_quiz: `Genera 4-6 ejercicios variados estilo Duolingo para adultos. Tipos disponibles (USA AL MENOS 3 DISTINTOS):
+  sop_walkthrough: `Genera 3-7 bloques sop_step en orden:
+{ "type": "sop_step", "n": 1, "title": "...", "description": "Instrucción operativa concreta", "warning": "⚠ Riesgo si aplica (opcional)", "must_check": true }
+- "must_check": true SIEMPRE para pasos críticos.
+- "warning" obligatorio si hay riesgo de seguridad, daño o error costoso.`,
+  interactive_quiz: `Genera 5-7 ejercicios variados estilo Duolingo para adultos. USA AL MENOS 3 TIPOS DISTINTOS y NO repitas el mismo tipo más de 2 veces seguidas. Cada ejercicio DEBE incluir "explanation" con el porqué + tip de memoria.
 - { "type": "mc", "question": "...", "options": ["a","b","c","d"], "correct": "a", "explanation": "..." }
 - { "type": "true_false", "question": "...", "correct": true, "explanation": "..." }
-- { "type": "fill_blank", "sentence": "El ___ es ___.", "correct": ["valor1","valor2"], "explanation": "..." }  // usa ___ por hueco; correct puede ser string (1 hueco) o array (varios)
+- { "type": "fill_blank", "sentence": "El ___ es ___.", "correct": ["valor1","valor2"], "explanation": "..." }
 - { "type": "match_pairs", "pairs": [{"left":"Concepto","right":"Definición"}, ...], "explanation": "..." }  // 3-5 pares
-- { "type": "order_steps", "steps": ["Paso 1","Paso 2","Paso 3","Paso 4"], "explanation": "..." }  // orden correcto
+- { "type": "order_steps", "steps": ["Paso 1","Paso 2","Paso 3","Paso 4"], "explanation": "..." }
 - { "type": "sort_into_buckets", "buckets": ["Categoría A","Categoría B"], "items": [{"text":"item","bucket":"Categoría A"}, ...], "explanation": "..." }
-- { "type": "highlight_terms", "sentence": "Texto donde hay que marcar las palabras clave.", "terms": ["palabras","clave"], "distractors": ["otras"], "explanation": "..." }`,
+- { "type": "highlight_terms", "sentence": "Texto donde hay que marcar las palabras clave.", "terms": ["palabras","clave"], "distractors": ["otras"], "explanation": "..." }
+- { "type": "tap_to_complete", "sentence": "El ___ controla el ___.", "bank": ["motor","sensor","panel","botón"], "correct": ["motor","sensor"], "explanation": "..." }`,
 };
 
 // ---------- Legacy single-shot (back-compat) ----------

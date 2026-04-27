@@ -83,6 +83,10 @@ export default function Practice() {
     if (!item) return;
     const q = quality({ correct, hadHint, attempts, timeMs });
     await review(item.id, q);
+    // Cada tarjeta repasada cuenta para la misión "srs"
+    try {
+      await supabase.rpc("increment_quest_progress", { _quest_type: "srs", _amount: 1 });
+    } catch { /* ignore */ }
 
     if (correct) {
       setCorrectCount((c) => c + 1);
