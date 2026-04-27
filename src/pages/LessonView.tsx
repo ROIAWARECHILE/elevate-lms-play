@@ -21,6 +21,7 @@ import { LessonRenderer } from "@/components/lesson/LessonRenderer";
 import { getLessonTypeMeta } from "@/lib/courseSchema";
 import { Badge } from "@/components/ui/badge";
 import { useDictionaryAutoIndex } from "@/hooks/useDictionaryAutoIndex";
+import { useSrsAutoSeed } from "@/hooks/useSrsAutoSeed";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -39,6 +40,8 @@ export default function LessonView() {
 
   useHotkeys("left", () => navigate(-1), { preventDefault: true });
   useDictionaryAutoIndex(lesson, courseId);
+  // Al completar la lección, sembramos sus conceptos/quizzes en el SRS del usuario.
+  useSrsAutoSeed(lesson, courseId, completed);
 
   useEffect(() => {
     const fetch = async () => {
