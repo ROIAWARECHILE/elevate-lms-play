@@ -478,6 +478,66 @@ export type Database = {
           },
         ]
       }
+      srs_items: {
+        Row: {
+          company_id: string
+          course_id: string | null
+          created_at: string
+          ease_factor: number
+          id: string
+          interval_days: number
+          item_key: string
+          item_type: string
+          last_reviewed_at: string | null
+          lesson_id: string | null
+          next_review_at: string
+          payload: Json
+          repetitions: number
+          strength: number
+          total_correct: number
+          total_reviews: number
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          course_id?: string | null
+          created_at?: string
+          ease_factor?: number
+          id?: string
+          interval_days?: number
+          item_key: string
+          item_type: string
+          last_reviewed_at?: string | null
+          lesson_id?: string | null
+          next_review_at?: string
+          payload: Json
+          repetitions?: number
+          strength?: number
+          total_correct?: number
+          total_reviews?: number
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          course_id?: string | null
+          created_at?: string
+          ease_factor?: number
+          id?: string
+          interval_days?: number
+          item_key?: string
+          item_type?: string
+          last_reviewed_at?: string | null
+          lesson_id?: string | null
+          next_review_at?: string
+          payload?: Json
+          repetitions?: number
+          strength?: number
+          total_correct?: number
+          total_reviews?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_achievements: {
         Row: {
           achievement_id: string
@@ -758,6 +818,73 @@ export type Database = {
       reset_user_progress: {
         Args: { _target_user_id: string }
         Returns: undefined
+      }
+      srs_due_count: { Args: never; Returns: number }
+      srs_enqueue: {
+        Args: {
+          _course_id?: string
+          _item_key: string
+          _item_type: string
+          _lesson_id?: string
+          _payload: Json
+        }
+        Returns: string
+      }
+      srs_get_due: {
+        Args: { _course_id?: string; _limit?: number }
+        Returns: {
+          company_id: string
+          course_id: string | null
+          created_at: string
+          ease_factor: number
+          id: string
+          interval_days: number
+          item_key: string
+          item_type: string
+          last_reviewed_at: string | null
+          lesson_id: string | null
+          next_review_at: string
+          payload: Json
+          repetitions: number
+          strength: number
+          total_correct: number
+          total_reviews: number
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "srs_items"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      srs_review: {
+        Args: { _item_id: string; _quality: number }
+        Returns: {
+          company_id: string
+          course_id: string | null
+          created_at: string
+          ease_factor: number
+          id: string
+          interval_days: number
+          item_key: string
+          item_type: string
+          last_reviewed_at: string | null
+          lesson_id: string | null
+          next_review_at: string
+          payload: Json
+          repetitions: number
+          strength: number
+          total_correct: number
+          total_reviews: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "srs_items"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
     }
     Enums: {

@@ -1,150 +1,213 @@
+## 🎯 Objetivo
 
-# 🧠 Sistema profesional de generación de cursos — Course Studio
+Transformar el sistema actual (creación + consumo de cursos) en un **motor de aprendizaje adaptativo profesional** que aplique los 9 principios pedagógicos: **Spaced Repetition, Retrieval Practice, Gamificación, Microlearning, Adaptive Learning, Learning by Doing, Feedback Inmediato, Habit Formation y Multimodal Learning**.
 
-Convertimos el actual `generate-course` (PDF + imágenes → módulos planos) en un **motor profesional, multi-fuente y multi-nodo**, inspirado en Coursera, Notion AI, Duolingo y Anki.
-
----
-
-## 1. Nuevos tipos de nodos (lecciones tipadas)
-
-Hoy todo es `lesson.content.blocks = [heading, paragraph]`. Lo extendemos a un **sistema de bloques tipados**, manteniendo retro-compatibilidad (los cursos viejos siguen funcionando):
-
-| `lesson_type` | Uso | Bloques soportados |
-|---|---|---|
-| `reading` | Lección clásica explicativa | `heading`, `paragraph`, `callout`, `image`, `quote`, `code`, `divider` |
-| `concept` | Definiciones / términos clave | `term` (palabra + definición + ejemplo) |
-| `flashcards` | Memorización tipo Anki | `flashcard` (front / back / hint) |
-| `steps` | Cómo-hacer / técnica paso a paso | `step` (n, title, description, tip) |
-| `comparison` | Tabla comparativa | `comparison_table` (rows/cols) |
-| `case_study` | Escenario aplicado | `scenario`, `question`, `reflection` |
-| `interactive_quiz` | Mini-quiz dentro de lección | `mc`, `true_false`, `fill_blank`, `match_pairs`, `order_steps` |
-| `video_embed` | Video externo (YouTube/Vimeo) | `video` |
-
-**Migración DB**: añadir `lesson_type text default 'reading'` a `lessons`. Todos los cursos existentes quedan como `reading` automáticamente. Los `content.blocks` siguen siendo `jsonb` libre — solo cambia el discriminador `block.type`.
+Se aplica tanto a cursos creados por **chat** como por el **Course Studio con IA**.
 
 ---
 
-## 2. Motor de generación multi-fuente (`generate-course` v2)
+## 🧱 Arquitectura propuesta (4 capas)
 
-Ampliamos la edge function para aceptar **cualquier combinación** de inputs:
-
-- 📄 **PDF** (ya existe)
-- 🖼️ **Imágenes / screenshots** (ya existe)
-- 📊 **Excel / CSV** → parseo a Markdown-table en cliente con `xlsx` library, se manda como texto al LLM
-- 🌐 **URLs** → fetch del contenido + extracción de texto (vía edge function `fetch-source` con sanitización)
-- 🔍 **Búsqueda web** (modo "investigación") → usar `tavily` o búsqueda de Lovable AI con grounding
-- ✍️ **Texto libre / Markdown pegado**
-- 📚 **Mezcla**: ej. "PDF de la política + 2 URLs + investigar X término"
-
-### Pipeline en 3 pasos (chain-of-thought controlado)
-
-En vez de una sola llamada gigante, la nueva edge function ejecuta un pipeline:
-
-1. **`extract`** → LLM lee todas las fuentes y produce un *knowledge brief* estructurado (temas, conceptos clave, hechos, fuentes citadas).
-2. **`outline`** → con el brief, genera un esqueleto: módulos + para cada lección decide su **`lesson_type`** según la naturaleza del contenido (definiciones → `concept`, procedimientos → `steps`, datos a memorizar → `flashcards`, casos → `case_study`, etc.).
-3. **`materialize`** → expande cada nodo a sus bloques finales + genera el quiz del módulo con variedad (no solo multiple choice: incluye `true_false`, `fill_blank`, `match_pairs` cuando aplique).
-
-Ventajas:
-- Mejor calidad (cada paso es más enfocado, menos alucinación).
-- Permite **streaming de progreso** real al cliente: "Extrayendo conceptos… Diseñando módulos 3/5… Escribiendo lección 7/24…".
-- Permite **preview & approve**: el admin ve el outline y puede editar antes de materializar (ahorra tokens y da control).
-
----
-
-## 3. Course Studio — nueva UI de admin
-
-Nueva ruta `/app/admin/courses/studio` que reemplaza el flujo actual de `GenerateCourse.tsx` con un **wizard de 4 pasos**:
-
-1. **Sources** — multi-uploader unificado (PDF, imágenes, Excel, URLs, texto, búsqueda web). Chips visuales por fuente, con preview.
-2. **Brief** — muestra el knowledge brief extraído (editable). El admin puede añadir notas: "enfócate en X, ignora Y".
-3. **Outline** — vista tipo Notion del esqueleto: módulos arrastrables, cada lección muestra su tipo (`reading`, `flashcards`, etc.) con icono. El admin puede:
-   - Cambiar el tipo de cualquier lección
-   - Reordenar / renombrar / borrar / añadir
-   - Aprobar el outline
-4. **Generate** — barra de progreso real por nodo (vía streaming). Al terminar redirige a `EditCourse` mejorado.
-
-Tech: `@dnd-kit/core` para drag-and-drop (ya soporta accesibilidad). Animaciones con `framer-motion` siguiendo el lenguaje visual existente (Kibbo, gradientes navy/cyan).
-
----
-
-## 4. EditCourse v2 — editor profesional por bloques
-
-Refactor de `EditCourse.tsx` para soportar los nuevos `lesson_type`:
-
-- **Renderer dinámico** `<LessonBlockEditor>` que despacha al editor correcto según `lesson_type`.
-- Sub-editores: `ReadingEditor` (bloques tipo Notion ligero), `FlashcardsEditor` (flip cards editables), `StepsEditor` (lista numerada con títulos), `ConceptEditor` (term/definition pares), `ComparisonEditor` (tabla), `CaseStudyEditor`.
-- Botón **"Regenerar con IA esta lección"** por nodo (llama a `generate-course/regenerate-node` solo para ese bloque).
-- Botón **"Convertir tipo"** (ej. transformar 5 paragraphs en 5 flashcards automáticamente).
-
----
-
-## 5. Renderers en runtime (`LessonView` extendida)
-
-`LessonView.tsx` ya renderiza `blocks: [heading|paragraph]`. Lo extendemos con un dispatcher:
-
-```tsx
-{lesson.lesson_type === 'flashcards'  && <FlashcardsRunner blocks={...} />}
-{lesson.lesson_type === 'steps'       && <StepsRunner       blocks={...} />}
-{lesson.lesson_type === 'concept'     && <ConceptRunner     blocks={...} />}
-// ...
-{(!lesson.lesson_type || lesson.lesson_type === 'reading') && <ReadingRunner blocks={...} />}
+```
+┌─────────────────────────────────────────┐
+│  CORE ENGINE  — SRS + Memoria adaptativa │  ← nuevo
+├─────────────────────────────────────────┤
+│  EXPERIENCE   — Microlecciones + Quizzes │  ← refactor
+├─────────────────────────────────────────┤
+│  GAME LAYER   — XP, streaks, misiones    │  ← ya existe, se extiende
+├─────────────────────────────────────────┤
+│  CONTEXT LAYER — Simulaciones / SOPs     │  ← nuevo bloque
+└─────────────────────────────────────────┘
 ```
 
-Cada runner tiene su propia UX (las flashcards se voltean, los pasos se desbloquean secuencialmente, el case_study tiene preguntas de reflexión que dan XP extra). Todos terminan llamando al mismo `completeLesson()` existente para preservar XP, streaks, achievements y daily quests.
+---
+
+## 📦 PR1 — Core Engine: Spaced Repetition (SM-2 simplificado)
+
+### 1.1 Base de datos (migración)
+
+**Nueva tabla `srs_items`** — una "tarjeta de memoria" por concepto/pregunta clave del usuario:
+
+```sql
+CREATE TABLE srs_items (
+  id uuid PRIMARY KEY,
+  user_id uuid NOT NULL,
+  company_id uuid NOT NULL,
+  course_id uuid,
+  lesson_id uuid,
+  -- Identidad del ítem
+  item_type text NOT NULL,        -- 'concept' | 'quiz_block' | 'term'
+  item_key text NOT NULL,         -- hash del contenido para dedup
+  payload jsonb NOT NULL,         -- pregunta + respuesta + explicación
+  -- Algoritmo SM-2
+  ease_factor real NOT NULL DEFAULT 2.5,
+  interval_days int NOT NULL DEFAULT 0,
+  repetitions int NOT NULL DEFAULT 0,
+  -- Half-Life Regression style
+  strength real NOT NULL DEFAULT 0.3,  -- 0..1 probabilidad de recordar HOY
+  last_reviewed_at timestamptz,
+  next_review_at timestamptz NOT NULL DEFAULT now(),
+  -- Estadística
+  total_reviews int DEFAULT 0,
+  total_correct int DEFAULT 0,
+  UNIQUE(user_id, item_key)
+);
+
+-- Índice clave para "qué tocar hoy"
+CREATE INDEX idx_srs_due ON srs_items(user_id, next_review_at)
+  WHERE next_review_at <= now();
+```
+
+**RLS:** sólo el dueño lee/escribe sus tarjetas.
+
+**RPC `srs_review(_item_id, _quality int)`** — actualiza intervalo según calidad de respuesta (0=falló, 3=correcto con duda, 5=fácil) usando SM-2:
+- `quality < 3` → reset `repetitions=0`, `interval=1`
+- `quality >= 3` → intervalos 1, 6, luego × ease_factor
+- Ajustar `ease_factor` y recalcular `strength` y `next_review_at`
+
+**RPC `srs_get_due(_limit int)`** — devuelve tarjetas vencidas ordenadas por urgencia.
+
+### 1.2 Lógica cliente
+
+- **`src/lib/srs.ts`** — implementación SM-2 + helpers para clasificar respuestas en quality 0–5.
+- **`src/hooks/useSRS.ts`** — `enqueueItems(blocks)`, `reviewItem(id, quality)`, `getDueCount()`.
+- **Hook auto-encolar:** cuando una lección se completa, los `interactive_quiz` y `concept` blocks se siembran automáticamente en `srs_items` (dedup por hash).
 
 ---
 
-## 6. Cambios concretos en código
+## 🔁 PR2 — Retrieval Practice + Daily Practice Hub
 
-### Edge functions
-- Reescribir `supabase/functions/generate-course/index.ts` → pipeline `extract → outline → materialize`, con tools separadas. Soporta `sources: [{kind: 'pdf'|'image'|'text'|'url'|'excel'|'search', payload}]`.
-- Nueva `supabase/functions/fetch-source/index.ts` → fetch sanitizado de URLs + extracción de texto.
-- Nueva `supabase/functions/generate-course/regenerate-node` (subruta) → regenerar una sola lección/quiz.
+### 2.1 Nueva página `/app/practice` ("Práctica diaria")
 
-### DB (migración)
-- `ALTER TABLE lessons ADD COLUMN lesson_type text NOT NULL DEFAULT 'reading';`
-- `ALTER TABLE courses ADD COLUMN source_brief jsonb;` (guardar el brief extraído para auditoría / regeneración futura)
-- Nueva tabla opcional `course_sources` (id, course_id, kind, name, metadata) para trazabilidad de "este curso vino de X PDF + Y URL".
+Reemplaza/complementa la página `Review` actual:
+- **Sesiones cortas de 5–10 ítems** mezclando contenidos vencidos del SRS.
+- UI tipo Duolingo: una pregunta a la vez, barra superior de progreso, animaciones de acierto/error, vidas opcionales.
+- Al final: resumen XP + racha + "siguiente sesión disponible en X horas".
+- Botón fijo en el dashboard: **"Practicar ahora · N pendientes"** con badge rojo si `due > 0`.
 
-### Frontend
-- `src/pages/admin/CourseStudio.tsx` (wizard nuevo)
-- `src/components/studio/SourcesStep.tsx`, `BriefStep.tsx`, `OutlineStep.tsx`, `GenerateStep.tsx`
-- `src/components/lesson/runners/` (FlashcardsRunner, StepsRunner, ConceptRunner, ComparisonRunner, CaseStudyRunner, InteractiveQuizRunner)
-- `src/components/lesson/editors/` (gemelos para edición)
-- `src/lib/courseSchema.ts` — tipos TS centralizados de bloques + Zod schemas validadores
-- Update `LessonView.tsx` y `EditCourse.tsx` con dispatchers
-- Reemplazar enlace "Generar con IA" en `AdminCourses.tsx` para apuntar a `/studio` (mantener `GenerateCourse.tsx` como modo "rápido" o deprecarlo).
+### 2.2 Refactor de `Review.tsx`
+- Renombrar a "Errores marcados" (lo manual queda).
+- La práctica adaptativa real vive en `/app/practice`.
 
-### Dependencias nuevas
-- `xlsx` (parseo Excel/CSV en cliente)
-- `@dnd-kit/core` + `@dnd-kit/sortable` (drag-and-drop accesible del outline)
-- `zod` (validación de schemas de bloques) — probablemente ya lo tienes via shadcn
-- `react-markdown` + `remark-gfm` (render de markdown en bloques `paragraph` y `callout`)
+### 2.3 Notificaciones de hábito (in-app)
+- Widget en dashboard: "Llevas X días seguidos. ¡No rompas la racha!".
+- Toast diario al primer login si hay tarjetas vencidas.
 
 ---
 
-## 7. Buenas prácticas aplicadas
+## 🎮 PR3 — Adaptive Learning + Microlearning
 
-- **Schemas tipados con Zod** → todo bloque generado por IA se valida antes de insertarse en DB; bloques inválidos se descartan con log, no rompen el curso.
-- **Streaming + idempotencia** → el pipeline guarda checkpoints; si falla en lección 12/24, se puede reanudar.
-- **Retry exponencial** en llamadas al AI Gateway con `429` (créditos) y `503`.
-- **Límites duros** (max 12 módulos, max 8 lecciones/módulo, max 50 páginas PDF, max 5 URLs, max 10 imágenes) para controlar costo y latencia.
-- **Sanitización** de URLs externas (allowlist de schemes, timeout de 10s, max 2MB de respuesta).
-- **Auditoría** — `course_sources` deja rastro de qué generó qué; el botón "Regenerar" siempre puede volver atrás.
-- **i18n-ready** — todos los prompts y strings en español por defecto (consistente con el resto del sistema), pero el schema soporta `language: 'es'|'en'`.
-- **Accesibilidad** — flashcards navegables con teclado (←/→/Space para flip), runners con roles ARIA correctos.
-- **Mobile-first** — el wizard y los runners responsive (Kibbo theme ya lo hace fácil).
-- **Sin secretos en cliente** — toda llamada al LLM y todo fetch de URLs externas pasan por edge functions.
-- **RLS preservada** — toda escritura nueva respeta `company_id` + rol `admin`.
+### 3.1 Perfil dinámico de usuario (`user_skill_profile`)
+
+```sql
+CREATE TABLE user_skill_profile (
+  user_id uuid PRIMARY KEY,
+  company_id uuid NOT NULL,
+  course_id uuid NOT NULL,
+  mastery real DEFAULT 0,       -- 0..1 promedio de strength del curso
+  difficulty_preference text,   -- 'beginner'|'intermediate'|'advanced' (auto-inferido)
+  avg_response_ms int,
+  updated_at timestamptz DEFAULT now(),
+  PRIMARY KEY (user_id, course_id)
+);
+```
+
+- Trigger/función para recalcular `mastery` tras cada review.
+- El `LessonRenderer` consulta el perfil y:
+  - Para usuarios `advanced` → muestra quiz primero, lectura colapsada.
+  - Para `beginner` → muestra lectura completa antes del quiz.
+
+### 3.2 Microlearning enforced
+- Validación en Course Studio: **lecciones ≤ 5 min** (estimar por palabras + bloques).
+- Si la IA genera lecciones largas → split automático en sub-lecciones de 1 concepto cada una.
+- Badge visible "⏱ 3 min" en cada nodo del mapa zigzag.
 
 ---
 
-## 8. Roadmap de implementación (sugerido en 3 PRs)
+## 🧠 PR4 — Learning by Doing: Nuevos tipos de bloques
 
-1. **PR1 — Foundation**: migración DB (`lesson_type`, `source_brief`, `course_sources`), tipos TS + Zod schemas, runners y editors básicos (`reading`, `flashcards`, `steps`, `concept`). LessonView y EditCourse con dispatcher. *(Compatibilidad total con cursos viejos.)*
-2. **PR2 — Studio + Pipeline**: nueva edge function pipeline (extract/outline/materialize), Course Studio wizard con sources unificadas (PDF, imágenes, texto, Excel, URLs).
-3. **PR3 — Pulido**: búsqueda web como fuente, regeneración por nodo, conversión de tipos, drag-and-drop avanzado, streaming de progreso real, comparison/case_study/interactive_quiz runners.
+Añadir al `courseSchema.ts` 3 nuevos `LessonType`:
+
+| Tipo | Pedagogía | UI |
+|------|-----------|-----|
+| `simulation` | Learning by Doing | Flujo de decisiones tipo árbol: "¿Qué haces si...?" → ramas con consecuencias |
+| `scenario_branching` | Casos reales | Escenario empresarial con 3+ caminos y feedback por ruta |
+| `sop_walkthrough` | Procedimientos | Paso a paso con checkmarks obligatorios + foto/video opcional por paso |
+
+Cada uno con su **runner** dedicado en `src/components/lesson/runners/`.
+
+### Nuevos quiz blocks (Duolingo extendido)
+- `tap_to_complete` — completa la frase tocando palabras del banco
+- `image_select` — elige la imagen correcta (para maquinaria/seguridad)
+- `audio_dictation` — escucha y transcribe (TTS via Web Speech API, sin coste)
 
 ---
 
-¿Apruebas el plan completo o prefieres que arranquemos solo con **PR1 + PR2** (que ya entrega un producto utilísimo) y dejamos PR3 para después?
+## ⚡ PR5 — Feedback Inmediato profesional
+
+Refactor de `InteractiveQuizRunner.tsx`:
+- **Animación de respuesta**: verde + bounce + sonido / rojo + shake + sonido (ya existe `audioEngine`).
+- **Explicación enriquecida** siempre visible tras responder, con:
+  - "✅ Correcto porque…" / "❌ Error común: …"
+  - Mini-tip de memoria ("Recuerda: …")
+  - Botón "Ver concepto en diccionario" → enlaza directo.
+- **Auto-mark mistake**: al fallar dos veces el mismo ítem en SRS, se añade automáticamente a "Errores marcados" (manteniendo la elección del usuario de marcar manualmente conceptos extra).
+
+---
+
+## 🤖 PR6 — Generación con IA alineada al motor
+
+### 6.1 Edge function `generate-course` (refactor del prompt)
+
+El prompt al modelo Gemini se reescribe para producir cursos **didácticamente correctos**:
+
+1. **Microlearning**: cada lesson ≤ 300 palabras, 1 concepto.
+2. **Mix obligatorio por módulo**:
+   - 1 lección `concept` (introduce términos)
+   - 1 lección `reading` o `video_embed` (contexto)
+   - 1 lección `interactive_quiz` con ≥ 5 ejercicios variados
+   - 1 lección `simulation` o `case_study` (aplicación)
+   - 1 quiz final (retrieval práctica)
+3. **Variedad de ejercicios**: nunca > 2 del mismo tipo seguidos.
+4. **Explicaciones**: cada `mc/true_false/fill_blank` debe traer `explanation` con tip de memoria.
+5. **Distractores plausibles** (no obvios) para MC.
+
+### 6.2 Nueva edge function `materialize-simulation`
+Genera escenarios ramificados a partir del `source_brief` cuando la outline marque un nodo como `simulation`.
+
+### 6.3 Course Studio — paso "Estrategia pedagógica"
+Nuevo paso entre **Outline** y **Generate**: el admin elige el **mix didáctico** (porcentaje de cada tipo) y la **dificultad inicial**. La IA respeta ese contrato.
+
+---
+
+## 🏆 PR7 — Gamificación bien hecha (anti-grinding)
+
+- **XP por aprendizaje real, no por clicks**: completar lección sin quiz = XP base, con quiz aprobado al primer intento = XP × 1.5.
+- **Misiones diarias enfocadas en SRS**: "Repasa 10 tarjetas vencidas" en lugar de sólo "completa lecciones".
+- **Logros pedagógicos nuevos**:
+  - 🧠 *Memoria de elefante* — 50 tarjetas con `strength > 0.9`
+  - 🔥 *Racha de hierro* — 14 días seguidos
+  - 🎯 *Sin errores* — 20 ejercicios correctos seguidos
+- **Ranking semanal** por XP de práctica adaptativa (no sólo por completar).
+
+---
+
+## 📋 Orden de entrega sugerido
+
+| PR | Alcance | Riesgo | Impacto |
+|----|---------|--------|---------|
+| **PR1** | DB + SRS engine + auto-seed | Bajo | 🔥 Alto |
+| **PR2** | Página `/app/practice` + dashboard hook | Bajo | 🔥 Alto |
+| **PR3** | Adaptive profile + microlearning enforce | Medio | Medio |
+| **PR4** | Bloques `simulation` + `sop_walkthrough` + nuevos quiz | Medio | 🔥 Alto |
+| **PR5** | Feedback inmediato pro + auto-mistake | Bajo | Medio |
+| **PR6** | Prompt IA pedagógico + materialize-simulation | Medio | 🔥 Alto |
+| **PR7** | Gamificación recalibrada | Bajo | Medio |
+
+---
+
+## ❓ Decisiones que necesito confirmar
+
+Tras aprobar el plan global haré 2–3 preguntas clave (algoritmo SRS exacto, si quieres TTS para audio_dictation, y si el ranking semanal debe ser por equipo o individual). Pero el grueso del plan no depende de eso — puedo arrancar por **PR1 + PR2** que son la columna vertebral.
+
+¿Apruebas para empezar a implementar?
