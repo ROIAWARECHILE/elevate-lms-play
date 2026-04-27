@@ -312,39 +312,6 @@ Llama a build_knowledge_brief con los resultados.`;
 }
 
 async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
-  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado en este knowledge brief, aplicando principios pedagógicos demostrados (microlearning, retrieval practice, learning by doing, multimodal):
-
-${JSON.stringify(brief).slice(0, 20_000)}
-
-REGLAS PEDAGÓGICAS (OBLIGATORIO):
-- 3 a 8 módulos. **4 a 6 lecciones por módulo**.
-- **Microlearning**: cada lección debe poder completarse en ≤ 5 minutos. Si un tema es grande, divídelo.
-- **Mix obligatorio por módulo** (en este orden lógico):
-   1. Una lección "concept" para introducir términos (vocabulario)
-   2. Una lección "reading" o "steps" para dar contexto/procedimiento
-   3. Una lección "interactive_quiz" para retrieval practice (≥ 5 ejercicios variados)
-   4. (Recomendado) Una lección "case_study" o "sop_walkthrough" para aplicación
-   5. (Opcional) Una lección "flashcards" o "comparison" para refuerzo
-- **Variedad obligatoria**: NO uses el mismo lesson_type 2+ veces seguidas dentro del mismo módulo.
-- Asigna lesson_type según naturaleza:
-   * "concept" → glosarios / definiciones
-   * "flashcards" → datos a memorizar (par corto)
-   * "steps" → técnica/procedimiento general
-   * "sop_walkthrough" → procedimiento operativo crítico (con riesgos / debe confirmarse paso a paso)
-   * "comparison" → contraste de opciones
-   * "case_study" → escenarios aplicados con preguntas
-   * "interactive_quiz" → mini-ejercicios retrieval
-   * "reading" → SOLO si nada de lo anterior aplica (úsalo poco)
-- Cada lección debe tener un "objective" claro (1 frase: qué sabrá el alumno).
-- Notas del admin: ${userNotes || "(ninguna)"}
-- Todo en español neutro, tono profesional pero cercano (adultos en empresa).`;
-  return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
-    temperature: 0.5,
-    maxTokens: 8000,
-  });
-}
-
-async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
   // Calibrate scope to brief richness — never invent modules without material.
   const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
   const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
