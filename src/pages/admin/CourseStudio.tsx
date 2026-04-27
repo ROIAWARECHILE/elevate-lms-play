@@ -233,11 +233,13 @@ export default function CourseStudio() {
     if (!profile?.company_id || !user?.id || !brief || !outline) return;
     setLoading(true);
     setStep(3);
-    setProgressMsg("Generando lecciones, bloques y quizzes… esto puede tardar 1-2 minutos.");
+    const totalModules = outline.modules?.length || 0;
+    setProgressMsg(`Creando estructura del curso…`);
     try {
-      const { data, error } = await supabase.functions.invoke("generate-course", {
+      // 1) Init: create course shell + empty modules
+      const initRes = await supabase.functions.invoke("generate-course", {
         body: {
-          mode: "materialize",
+          mode: "materialize_init",
           companyId: profile.company_id,
           userId: user.id,
           title,
@@ -247,9 +249,34 @@ export default function CourseStudio() {
           sources: sources.map((s) => ({ kind: s.kind, name: s.name, metadata: s.metadata })),
         },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message || "Materialize failed");
-      toast({ title: "¡Curso creado!", description: `${data.modulesCount} módulos generados.` });
-      navigate(`/app/admin/courses/${data.courseId}`);
+      if (initRes.error || initRes.data?.error)
+        throw new Error(initRes.data?.error || initRes.error?.message || "Init failed");
+      const { courseId, moduleIds } = initRes.data as { courseId: string; moduleIds: string[] };
+
+      // 2) Materialize each module sequentially (one edge invocation per module)
+      for (let mi = 0; mi < totalModules; mi++) {
+        const moduleId = moduleIds[mi];
+        if (!moduleId) continue;
+        setProgressMsg(`Generando módulo ${mi + 1} de ${totalModules}…`);
+        const modRes = await supabase.functions.invoke("generate-course", {
+          body: {
+            mode: "materialize_module",
+            companyId: profile.company_id,
+            userId: user.id,
+            brief,
+            outline,
+            moduleId,
+            moduleIndex: mi,
+          },
+        });
+        if (modRes.error || modRes.data?.error) {
+          console.error("Module failed:", mi, modRes.error || modRes.data?.error);
+          // Continue with remaining modules — partial course is still useful
+        }
+      }
+
+      toast({ title: "¡Curso creado!", description: `${totalModules} módulos generados.` });
+      navigate(`/app/admin/courses/${courseId}`);
     } catch (e: any) {
       toast({ title: "Error generando curso", description: e.message, variant: "destructive" });
       setStep(2);
