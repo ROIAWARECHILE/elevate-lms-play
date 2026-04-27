@@ -654,38 +654,51 @@ Deno.serve(async (req) => {
         inserted++;
       }
 
-      // Quiz per module (separate AI call, but module already done so safe).
-      try {
-        const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
-        if (questions.length) {
-          const { data: quizData, error: quizError } = await supabase
-            .from("quizzes")
-            .insert({
-              module_id: moduleId,
-              title: `Quiz: ${mod.title}`,
-              passing_score: 70,
-              max_attempts: 3,
-              xp_reward: 25,
-            })
-            .select("id")
-            .single();
-          if (!quizError && quizData) {
-            const qRows = questions.map((q: any, qi: number) => ({
-              quiz_id: quizData.id,
-              question_text: q.question_text,
-              question_type: q.question_type || "multiple_choice",
-              options: q.options || [],
-              correct_answer: q.correct_answer,
-              sort_order: qi,
-            }));
-            await supabase.from("questions").insert(qRows);
+      // Quiz per module — only if the module actually has lessons with content.
+      if (inserted > 0) {
+        try {
+          const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
+          // Only keep well-formed questions whose correct_answer matches an option.
+          const validQs = (questions || []).filter((q: any) =>
+            q?.question_text &&
+            Array.isArray(q.options) && q.options.length >= 2 &&
+            q.correct_answer && q.options.includes(q.correct_answer),
+          );
+          if (validQs.length) {
+            const { data: quizData, error: quizError } = await supabase
+              .from("quizzes")
+              .insert({
+                module_id: moduleId,
+                title: `Quiz: ${mod.title}`,
+                passing_score: 70,
+                max_attempts: 3,
+                xp_reward: 25,
+              })
+              .select("id")
+              .single();
+            if (!quizError && quizData) {
+              const qRows = validQs.map((q: any, qi: number) => ({
+                quiz_id: quizData.id,
+                question_text: q.question_text,
+                question_type: q.question_type || "multiple_choice",
+                options: q.options || [],
+                correct_answer: q.correct_answer,
+                sort_order: qi,
+              }));
+              await supabase.from("questions").insert(qRows);
+            }
           }
+        } catch (e) {
+          console.error("Quiz materialize failed:", mod.title, e);
         }
-      } catch (e) {
-        console.error("Quiz materialize failed:", mod.title, e);
+      } else {
+        // Module ended up with zero valid lessons → delete the empty module shell
+        // so the course never shows hollow modules.
+        await supabase.from("modules").delete().eq("id", moduleId);
+        console.warn(`Module "${mod.title}" deleted: no valid lessons generated.`);
       }
 
-      return json({ ok: true, moduleId, lessons: lessonResults.length });
+      return json({ ok: true, moduleId, inserted, skipped, deleted: inserted === 0 });
     }
 
     // ----- Legacy single-shot materialize (kept for back-compat, NOT recommended). -----
