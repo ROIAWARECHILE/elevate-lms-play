@@ -720,3 +720,121 @@ function HighlightTerms({
     </ItemShell>
   );
 }
+
+// ---------- Tap to complete (banco de palabras) ----------
+
+function TapToComplete({
+  block,
+  idx,
+}: {
+  block: Extract<InteractiveQuizBlock, { type: "tap_to_complete" }>;
+  idx: number;
+}) {
+  const blanks = useMemo(() => block.correct.length, [block.correct]);
+  const [picks, setPicks] = useState<(string | null)[]>(() => Array(blanks).fill(null));
+  const [submitted, setSubmitted] = useState(false);
+
+  const usedCounts = picks.reduce<Record<string, number>>((acc, p) => {
+    if (p) acc[p] = (acc[p] || 0) + 1;
+    return acc;
+  }, {});
+  const bankWithLeft = block.bank.map((w) => {
+    const total = block.bank.filter((x) => x === w).length;
+    return { word: w, left: total - (usedCounts[w] || 0) };
+  });
+
+  const allFilled = picks.every((p) => p !== null);
+  const allCorrect =
+    submitted &&
+    picks.every(
+      (p, i) =>
+        (p ?? "").trim().toLowerCase() === (block.correct[i] ?? "").trim().toLowerCase(),
+    );
+  const correctText = block.correct.join(" · ");
+  const reporter = useMistakeReporter(
+    "tap_to_complete",
+    block.sentence,
+    correctText,
+    block.explanation,
+  );
+
+  const tapWord = (w: string) => {
+    if (submitted) return;
+    const next = [...picks];
+    const firstEmpty = next.findIndex((p) => p === null);
+    if (firstEmpty === -1) return;
+    next[firstEmpty] = w;
+    setPicks(next);
+  };
+  const removePick = (i: number) => {
+    if (submitted) return;
+    const next = [...picks];
+    next[i] = null;
+    setPicks(next);
+  };
+
+  // Renderiza la frase intercalando inputs (huecos tocables)
+  const parts = block.sentence.split(/_+/g);
+  const rendered: React.ReactNode[] = [];
+  parts.forEach((p, i) => {
+    rendered.push(<span key={`p${i}`}>{p}</span>);
+    if (i < parts.length - 1) {
+      const v = picks[i];
+      rendered.push(
+        <button
+          key={`b${i}`}
+          type="button"
+          onClick={() => removePick(i)}
+          disabled={submitted}
+          className={`mx-1 inline-block min-w-[80px] px-2 py-0.5 rounded-md border-b-2 align-middle text-sm transition-colors ${
+            v
+              ? submitted
+                ? (v ?? "").trim().toLowerCase() ===
+                  (block.correct[i] ?? "").trim().toLowerCase()
+                  ? "bg-success/15 border-success text-success"
+                  : "bg-destructive/15 border-destructive text-destructive"
+                : "bg-primary/10 border-primary text-primary"
+              : "border-muted-foreground/40 text-muted-foreground"
+          }`}
+        >
+          {v ?? "____"}
+        </button>,
+      );
+    }
+  });
+
+  return (
+    <ItemShell
+      idx={idx}
+      question={<div className="leading-loose">{rendered}</div>}
+      result={submitted ? { correct: allCorrect, correctText } : null}
+      explanation={block.explanation}
+      onMarkMistake={() => reporter.mark(picks.filter(Boolean).join(" · "))}
+      alreadyMarked={reporter.marked}
+    >
+      <div className="flex flex-wrap gap-2">
+        {bankWithLeft.map((b, i) => (
+          <button
+            key={`${b.word}-${i}`}
+            type="button"
+            disabled={submitted || b.left <= 0}
+            onClick={() => tapWord(b.word)}
+            className={`px-3 py-1.5 rounded-lg border text-sm transition-all ${
+              b.left <= 0
+                ? "bg-muted/50 border-border text-muted-foreground opacity-50"
+                : "bg-background border-border hover:border-primary/40 hover:bg-primary/5"
+            }`}
+          >
+            {b.word}
+          </button>
+        ))}
+      </div>
+      {!submitted && (
+        <Button size="sm" onClick={() => setSubmitted(true)} disabled={!allFilled}>
+          Comprobar
+        </Button>
+      )}
+    </ItemShell>
+  );
+}
+
