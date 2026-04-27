@@ -254,6 +254,9 @@ export default function CourseStudio() {
       const { courseId, moduleIds } = initRes.data as { courseId: string; moduleIds: string[] };
 
       // 2) Materialize each module sequentially (one edge invocation per module)
+      let totalSkipped = 0;
+      let totalInserted = 0;
+      let deletedModules = 0;
       for (let mi = 0; mi < totalModules; mi++) {
         const moduleId = moduleIds[mi];
         if (!moduleId) continue;
@@ -271,11 +274,19 @@ export default function CourseStudio() {
         });
         if (modRes.error || modRes.data?.error) {
           console.error("Module failed:", mi, modRes.error || modRes.data?.error);
-          // Continue with remaining modules — partial course is still useful
+          continue;
         }
+        const d = modRes.data || {};
+        totalInserted += d.inserted || 0;
+        totalSkipped += (d.skipped?.length || 0);
+        if (d.deleted) deletedModules += 1;
       }
 
-      toast({ title: "¡Curso creado!", description: `${totalModules} módulos generados.` });
+      const summary =
+        `${totalInserted} lecciones generadas` +
+        (totalSkipped ? ` · ${totalSkipped} omitidas (material insuficiente)` : "") +
+        (deletedModules ? ` · ${deletedModules} módulo(s) eliminado(s) por falta de contenido` : "");
+      toast({ title: "¡Curso creado!", description: summary });
       navigate(`/app/admin/courses/${courseId}`);
     } catch (e: any) {
       toast({ title: "Error generando curso", description: e.message, variant: "destructive" });

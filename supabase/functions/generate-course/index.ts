@@ -31,28 +31,89 @@ function getAiConfig() {
   };
 }
 
-async function callAi(messages: any[], tool: any, opts: { temperature?: number; maxTokens?: number } = {}) {
+async function callAi(
+  messages: any[],
+  tool: any,
+  opts: { temperature?: number; maxTokens?: number; retries?: number } = {},
+) {
   const { apiKey, url, model } = getAiConfig();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages,
-      tools: [tool],
-      tool_choice: { type: "function", function: { name: tool.function.name } },
-      temperature: opts.temperature ?? 0.6,
-      max_tokens: opts.maxTokens ?? 16000,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`AI error (${res.status}): ${body.slice(0, 500)}`);
+  const maxRetries = opts.retries ?? 2;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Lower temperature on retries to make tool calling more deterministic
+    const temp = attempt === 0 ? (opts.temperature ?? 0.6) : Math.max(0.2, (opts.temperature ?? 0.6) - 0.2 * attempt);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages,
+          tools: [tool],
+          tool_choice: { type: "function", function: { name: tool.function.name } },
+          temperature: temp,
+          max_tokens: opts.maxTokens ?? 16000,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        // Retry on transient errors
+        if (res.status === 429 || res.status >= 500) {
+          lastErr = new Error(`AI error (${res.status}): ${body.slice(0, 200)}`);
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          continue;
+        }
+        throw new Error(`AI error (${res.status}): ${body.slice(0, 500)}`);
+      }
+      const data = await res.json();
+      const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+      if (!toolCall) {
+        lastErr = new Error("AI did not return tool call");
+        continue; // retry
+      }
+      try {
+        return JSON.parse(toolCall.function.arguments);
+      } catch (e) {
+        lastErr = new Error("AI returned invalid JSON in tool call");
+        continue;
+      }
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      if (attempt === maxRetries) throw lastErr;
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
   }
-  const data = await res.json();
-  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!toolCall) throw new Error("AI did not return tool call");
-  return JSON.parse(toolCall.function.arguments);
+  throw lastErr || new Error("AI call failed");
+}
+
+// Validate that generated blocks actually contain content for the given lesson_type.
+function blocksAreValid(lessonType: string, blocks: any[]): boolean {
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  const has = (t: string) => blocks.some((b) => b?.type === t);
+  switch (lessonType) {
+    case "concept":
+      return blocks.some((b) => b?.type === "term" && b.term && b.definition);
+    case "flashcards":
+      return blocks.some((b) => b?.type === "flashcard" && b.front && b.back);
+    case "steps":
+      return blocks.some((b) => b?.type === "step" && b.title);
+    case "comparison":
+      return blocks.some(
+        (b) => b?.type === "comparison_table" && Array.isArray(b.headers) && Array.isArray(b.rows) && b.rows.length > 0,
+      );
+    case "case_study":
+      return has("scenario") || has("question");
+    case "sop_walkthrough":
+      return blocks.some((b) => b?.type === "sop_step" && b.title);
+    case "interactive_quiz":
+      return blocks.some((b) =>
+        ["mc", "true_false", "fill_blank", "match_pairs", "order_steps", "sort_into_buckets", "highlight_terms", "tap_to_complete"].includes(b?.type),
+      );
+    case "reading":
+    default:
+      return blocks.some((b) => (b?.type === "paragraph" || b?.type === "heading") && b.text);
+  }
 }
 
 // ---------- Tool schemas ----------
@@ -251,41 +312,62 @@ Llama a build_knowledge_brief con los resultados.`;
 }
 
 async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
-  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado en este knowledge brief, aplicando principios pedagógicos demostrados (microlearning, retrieval practice, learning by doing, multimodal):
+  // Calibrate scope to brief richness — never invent modules without material.
+  const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
+  const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
+  const procCount = Array.isArray(brief?.procedures) ? brief.procedures.length : 0;
+  const compCount = Array.isArray(brief?.comparisons) ? brief.comparisons.length : 0;
+  const richness = conceptCount + factCount + procCount * 2 + compCount;
 
+  // Adaptive caps: poor brief → small focused course, rich brief → up to 6 modules.
+  let maxModules: number;
+  let minModules: number;
+  if (richness < 6) { minModules = 1; maxModules = 2; }
+  else if (richness < 14) { minModules = 2; maxModules = 3; }
+  else if (richness < 25) { minModules = 3; maxModules = 4; }
+  else if (richness < 40) { minModules = 3; maxModules = 5; }
+  else { minModules = 4; maxModules = 6; }
+
+  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado EXCLUSIVAMENTE en este knowledge brief. NO inventes contenido fuera del brief.
+
+BRIEF:
 ${JSON.stringify(brief).slice(0, 20_000)}
 
-REGLAS PEDAGÓGICAS (OBLIGATORIO):
-- 3 a 8 módulos. **4 a 6 lecciones por módulo**.
-- **Microlearning**: cada lección debe poder completarse en ≤ 5 minutos. Si un tema es grande, divídelo.
-- **Mix obligatorio por módulo** (en este orden lógico):
-   1. Una lección "concept" para introducir términos (vocabulario)
-   2. Una lección "reading" o "steps" para dar contexto/procedimiento
-   3. Una lección "interactive_quiz" para retrieval practice (≥ 5 ejercicios variados)
-   4. (Recomendado) Una lección "case_study" o "sop_walkthrough" para aplicación
-   5. (Opcional) Una lección "flashcards" o "comparison" para refuerzo
-- **Variedad obligatoria**: NO uses el mismo lesson_type 2+ veces seguidas dentro del mismo módulo.
-- Asigna lesson_type según naturaleza:
-   * "concept" → glosarios / definiciones
-   * "flashcards" → datos a memorizar (par corto)
-   * "steps" → técnica/procedimiento general
-   * "sop_walkthrough" → procedimiento operativo crítico (con riesgos / debe confirmarse paso a paso)
-   * "comparison" → contraste de opciones
-   * "case_study" → escenarios aplicados con preguntas
-   * "interactive_quiz" → mini-ejercicios retrieval
-   * "reading" → SOLO si nada de lo anterior aplica (úsalo poco)
-- Cada lección debe tener un "objective" claro (1 frase: qué sabrá el alumno).
+REGLA CRÍTICA — ALCANCE ADAPTATIVO:
+- Material disponible: ${conceptCount} conceptos, ${factCount} hechos, ${procCount} procedimientos, ${compCount} comparaciones (richness=${richness}).
+- Genera ENTRE ${minModules} Y ${maxModules} módulos. NO MÁS. Mejor pocos módulos sólidos que muchos vacíos.
+- Cada módulo DEBE poder respaldarse con al menos 2-3 elementos del brief (conceptos, hechos, procedimientos…). Si no hay material para un módulo, NO lo crees.
+- Cada módulo: 3 a 5 lecciones. NUNCA generes una lección si no hay material concreto en el brief para llenarla.
+
+REGLAS PEDAGÓGICAS:
+- **Microlearning**: cada lección ≤ 5 minutos.
+- **Mix lógico por módulo** (adapta según material disponible):
+   1. Si hay conceptos clave → una lección "concept"
+   2. Si hay procedimiento → una lección "steps" o "sop_walkthrough"
+   3. Si hay comparaciones → una lección "comparison"
+   4. SIEMPRE una lección "interactive_quiz" para retrieval (≥ 5 ejercicios)
+   5. Opcional: "case_study" o "flashcards" si el material lo soporta
+- **Asignación de lesson_type según material**:
+   * "concept" → SOLO si key_concepts del brief tiene ≥ 3 términos relevantes para el módulo
+   * "flashcards" → SOLO si hay datos memorizables (pares cortos)
+   * "steps" → SOLO si brief.procedures tiene pasos para el tema
+   * "sop_walkthrough" → SOLO si hay procedimiento crítico con riesgos
+   * "comparison" → SOLO si brief.comparisons tiene tabla aplicable
+   * "case_study" → SOLO si hay hechos suficientes para construir un escenario
+   * "interactive_quiz" → SIEMPRE incluir uno por módulo (retrieval)
+   * "reading" → ÚLTIMO RECURSO. Evítalo a menos que nada de lo anterior aplique
+- "objective" claro (1 frase: qué sabrá el alumno).
 - Notas del admin: ${userNotes || "(ninguna)"}
-- Todo en español neutro, tono profesional pero cercano (adultos en empresa).`;
+- Español neutro, tono profesional para adultos.`;
   return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
-    temperature: 0.5,
+    temperature: 0.4,
     maxTokens: 8000,
   });
 }
 
 async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
   const schemaHint = LESSON_BLOCK_HINTS[lesson.lesson_type] || LESSON_BLOCK_HINTS.reading;
-  const text = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
+  const baseText = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
 
 Curso brief: ${JSON.stringify(brief).slice(0, 12_000)}
 Módulo: "${moduleTitle}"
@@ -294,25 +376,33 @@ Tipo: ${lesson.lesson_type}
 Objetivo: ${lesson.objective}
 
 REGLAS DE CALIDAD (OBLIGATORIO):
-- Microlearning: el conjunto de bloques debe leerse/completarse en ≤ 5 minutos (≈ ≤ 300 palabras + ejercicios cortos).
-- Concreto y aplicable: cero relleno, cero genéricos. Usa datos reales del brief.
-- Para preguntas (mc / true_false / fill_blank): SIEMPRE incluye un campo "explanation" útil que:
-   1) Explique POR QUÉ la opción correcta es correcta
-   2) Mencione el error común si aplica
-   3) Termine con un mini-tip de memoria ("Recuerda: ...")
-- En "mc" los distractores deben ser PLAUSIBLES (no obvios ni absurdos). Mismo registro que la correcta.
-- Variedad: dentro de un interactive_quiz no uses el mismo tipo más de 2 veces seguidas.
-- En "sop_walkthrough" cada paso CRÍTICO debe llevar "warning" cuando hay riesgo y "must_check": true.
+- Microlearning: ≤ 5 minutos (≤ 300 palabras + ejercicios cortos).
+- Concreto y aplicable: cero relleno. Usa datos REALES del brief.
+- Para preguntas (mc / true_false / fill_blank): SIEMPRE "explanation" útil que (1) explique por qué la correcta es correcta, (2) mencione el error común, (3) termine con un mini-tip de memoria.
+- En "mc" los distractores deben ser PLAUSIBLES.
+- En "sop_walkthrough" cada paso crítico lleva "warning" si hay riesgo y "must_check": true.
+- DEBES devolver al menos 4 bloques que cumplan EXACTAMENTE el formato del tipo "${lesson.lesson_type}".
 
-FORMATO REQUERIDO de cada bloque:
+FORMATO REQUERIDO de cada bloque (tipo "${lesson.lesson_type}"):
 ${schemaHint}
 
-Devuelve entre 4 y 10 bloques de calidad, con contenido REAL (no placeholders).`;
-  const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_LESSON_TOOL, {
-    temperature: 0.6,
-    maxTokens: 6000,
-  });
-  return Array.isArray(result?.blocks) ? result.blocks : [];
+Devuelve entre 4 y 10 bloques de calidad real (no placeholders).`;
+
+  // Try up to 2 times. If the second attempt still produces invalid content,
+  // throw — caller will skip this lesson rather than insert a placeholder.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const text = attempt === 0
+      ? baseText
+      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: tu salida no contenía bloques válidos del tipo "${lesson.lesson_type}". Esta vez SOLO devuelve bloques con la forma exacta indicada arriba.`;
+    const result = await callAi(
+      [{ role: "user", content: [{ type: "text", text }] }],
+      MATERIALIZE_LESSON_TOOL,
+      { temperature: attempt === 0 ? 0.55 : 0.35, maxTokens: 6000 },
+    );
+    const blocks = Array.isArray(result?.blocks) ? result.blocks : [];
+    if (blocksAreValid(lesson.lesson_type, blocks)) return blocks;
+  }
+  throw new Error(`Lesson "${lesson.title}" produced no valid blocks for type ${lesson.lesson_type}`);
 }
 
 async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any[]) {
@@ -530,67 +620,85 @@ Deno.serve(async (req) => {
       const supabase = getServiceClient();
 
       // Run all lesson generations in parallel (bounded by AI gateway concurrency).
+      // Failed lessons are SKIPPED (not inserted as placeholders) so the module
+      // never contains empty lessons. We report skipped titles back to the client.
       const lessonResults = await Promise.all(
         (mod.lessons || []).map(async (lesson: any) => {
           try {
             const blocks = await stepMaterializeLesson(brief, mod.title, lesson);
-            return { lesson, blocks };
+            return { lesson, blocks, ok: true as const };
           } catch (e) {
-            console.error("Lesson materialize failed:", lesson.title, e);
-            return {
-              lesson,
-              blocks: [{ type: "paragraph", text: lesson.objective || "Contenido pendiente." }],
-            };
+            console.error("Lesson materialize failed (skipping):", lesson.title, e);
+            return { lesson, blocks: [], ok: false as const };
           }
         }),
       );
 
-      // Insert lessons sequentially (cheap DB ops, preserves order).
-      for (let li = 0; li < lessonResults.length; li++) {
-        const { lesson, blocks } = lessonResults[li];
+      // Insert ONLY lessons that produced valid content. Preserves order via sort_order.
+      const skipped: string[] = [];
+      let inserted = 0;
+      for (const { lesson, blocks, ok } of lessonResults) {
+        if (!ok || blocks.length === 0) {
+          skipped.push(lesson.title);
+          continue;
+        }
         await supabase.from("lessons").insert({
           module_id: moduleId,
           title: lesson.title,
           lesson_type: lesson.lesson_type || "reading",
           content: { blocks },
           content_type: "text",
-          sort_order: li,
+          sort_order: inserted,
           xp_reward: 10,
         });
+        inserted++;
       }
 
-      // Quiz per module (separate AI call, but module already done so safe).
-      try {
-        const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
-        if (questions.length) {
-          const { data: quizData, error: quizError } = await supabase
-            .from("quizzes")
-            .insert({
-              module_id: moduleId,
-              title: `Quiz: ${mod.title}`,
-              passing_score: 70,
-              max_attempts: 3,
-              xp_reward: 25,
-            })
-            .select("id")
-            .single();
-          if (!quizError && quizData) {
-            const qRows = questions.map((q: any, qi: number) => ({
-              quiz_id: quizData.id,
-              question_text: q.question_text,
-              question_type: q.question_type || "multiple_choice",
-              options: q.options || [],
-              correct_answer: q.correct_answer,
-              sort_order: qi,
-            }));
-            await supabase.from("questions").insert(qRows);
+      // Quiz per module — only if the module actually has lessons with content.
+      if (inserted > 0) {
+        try {
+          const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
+          // Only keep well-formed questions whose correct_answer matches an option.
+          const validQs = (questions || []).filter((q: any) =>
+            q?.question_text &&
+            Array.isArray(q.options) && q.options.length >= 2 &&
+            q.correct_answer && q.options.includes(q.correct_answer),
+          );
+          if (validQs.length) {
+            const { data: quizData, error: quizError } = await supabase
+              .from("quizzes")
+              .insert({
+                module_id: moduleId,
+                title: `Quiz: ${mod.title}`,
+                passing_score: 70,
+                max_attempts: 3,
+                xp_reward: 25,
+              })
+              .select("id")
+              .single();
+            if (!quizError && quizData) {
+              const qRows = validQs.map((q: any, qi: number) => ({
+                quiz_id: quizData.id,
+                question_text: q.question_text,
+                question_type: q.question_type || "multiple_choice",
+                options: q.options || [],
+                correct_answer: q.correct_answer,
+                sort_order: qi,
+              }));
+              await supabase.from("questions").insert(qRows);
+            }
           }
+        } catch (e) {
+          console.error("Quiz materialize failed:", mod.title, e);
         }
-      } catch (e) {
-        console.error("Quiz materialize failed:", mod.title, e);
+      } else {
+        // Module ended up with zero valid lessons → delete the empty module shell
+        // so the course never shows hollow modules.
+        await supabase.from("modules").delete().eq("id", moduleId);
+        console.warn(`Module "${mod.title}" deleted: no valid lessons generated.`);
       }
 
-      return json({ ok: true, moduleId, lessons: lessonResults.length });
+      return json({ ok: true, moduleId, inserted, skipped, deleted: inserted === 0 });
     }
 
     // ----- Legacy single-shot materialize (kept for back-compat, NOT recommended). -----
