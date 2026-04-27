@@ -344,9 +344,63 @@ REGLAS PEDAGÓGICAS (OBLIGATORIO):
   });
 }
 
+async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
+  // Calibrate scope to brief richness — never invent modules without material.
+  const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
+  const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
+  const procCount = Array.isArray(brief?.procedures) ? brief.procedures.length : 0;
+  const compCount = Array.isArray(brief?.comparisons) ? brief.comparisons.length : 0;
+  const richness = conceptCount + factCount + procCount * 2 + compCount;
+
+  // Adaptive caps: poor brief → small focused course, rich brief → up to 6 modules.
+  let maxModules: number;
+  let minModules: number;
+  if (richness < 6) { minModules = 1; maxModules = 2; }
+  else if (richness < 14) { minModules = 2; maxModules = 3; }
+  else if (richness < 25) { minModules = 3; maxModules = 4; }
+  else if (richness < 40) { minModules = 3; maxModules = 5; }
+  else { minModules = 4; maxModules = 6; }
+
+  const text = `Diseña un curso titulado "${title}" (nivel ${level}) basado EXCLUSIVAMENTE en este knowledge brief. NO inventes contenido fuera del brief.
+
+BRIEF:
+${JSON.stringify(brief).slice(0, 20_000)}
+
+REGLA CRÍTICA — ALCANCE ADAPTATIVO:
+- Material disponible: ${conceptCount} conceptos, ${factCount} hechos, ${procCount} procedimientos, ${compCount} comparaciones (richness=${richness}).
+- Genera ENTRE ${minModules} Y ${maxModules} módulos. NO MÁS. Mejor pocos módulos sólidos que muchos vacíos.
+- Cada módulo DEBE poder respaldarse con al menos 2-3 elementos del brief (conceptos, hechos, procedimientos…). Si no hay material para un módulo, NO lo crees.
+- Cada módulo: 3 a 5 lecciones. NUNCA generes una lección si no hay material concreto en el brief para llenarla.
+
+REGLAS PEDAGÓGICAS:
+- **Microlearning**: cada lección ≤ 5 minutos.
+- **Mix lógico por módulo** (adapta según material disponible):
+   1. Si hay conceptos clave → una lección "concept"
+   2. Si hay procedimiento → una lección "steps" o "sop_walkthrough"
+   3. Si hay comparaciones → una lección "comparison"
+   4. SIEMPRE una lección "interactive_quiz" para retrieval (≥ 5 ejercicios)
+   5. Opcional: "case_study" o "flashcards" si el material lo soporta
+- **Asignación de lesson_type según material**:
+   * "concept" → SOLO si key_concepts del brief tiene ≥ 3 términos relevantes para el módulo
+   * "flashcards" → SOLO si hay datos memorizables (pares cortos)
+   * "steps" → SOLO si brief.procedures tiene pasos para el tema
+   * "sop_walkthrough" → SOLO si hay procedimiento crítico con riesgos
+   * "comparison" → SOLO si brief.comparisons tiene tabla aplicable
+   * "case_study" → SOLO si hay hechos suficientes para construir un escenario
+   * "interactive_quiz" → SIEMPRE incluir uno por módulo (retrieval)
+   * "reading" → ÚLTIMO RECURSO. Evítalo a menos que nada de lo anterior aplique
+- "objective" claro (1 frase: qué sabrá el alumno).
+- Notas del admin: ${userNotes || "(ninguna)"}
+- Español neutro, tono profesional para adultos.`;
+  return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
+    temperature: 0.4,
+    maxTokens: 8000,
+  });
+}
+
 async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
   const schemaHint = LESSON_BLOCK_HINTS[lesson.lesson_type] || LESSON_BLOCK_HINTS.reading;
-  const text = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
+  const baseText = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
 
 Curso brief: ${JSON.stringify(brief).slice(0, 12_000)}
 Módulo: "${moduleTitle}"
@@ -355,25 +409,33 @@ Tipo: ${lesson.lesson_type}
 Objetivo: ${lesson.objective}
 
 REGLAS DE CALIDAD (OBLIGATORIO):
-- Microlearning: el conjunto de bloques debe leerse/completarse en ≤ 5 minutos (≈ ≤ 300 palabras + ejercicios cortos).
-- Concreto y aplicable: cero relleno, cero genéricos. Usa datos reales del brief.
-- Para preguntas (mc / true_false / fill_blank): SIEMPRE incluye un campo "explanation" útil que:
-   1) Explique POR QUÉ la opción correcta es correcta
-   2) Mencione el error común si aplica
-   3) Termine con un mini-tip de memoria ("Recuerda: ...")
-- En "mc" los distractores deben ser PLAUSIBLES (no obvios ni absurdos). Mismo registro que la correcta.
-- Variedad: dentro de un interactive_quiz no uses el mismo tipo más de 2 veces seguidas.
-- En "sop_walkthrough" cada paso CRÍTICO debe llevar "warning" cuando hay riesgo y "must_check": true.
+- Microlearning: ≤ 5 minutos (≤ 300 palabras + ejercicios cortos).
+- Concreto y aplicable: cero relleno. Usa datos REALES del brief.
+- Para preguntas (mc / true_false / fill_blank): SIEMPRE "explanation" útil que (1) explique por qué la correcta es correcta, (2) mencione el error común, (3) termine con un mini-tip de memoria.
+- En "mc" los distractores deben ser PLAUSIBLES.
+- En "sop_walkthrough" cada paso crítico lleva "warning" si hay riesgo y "must_check": true.
+- DEBES devolver al menos 4 bloques que cumplan EXACTAMENTE el formato del tipo "${lesson.lesson_type}".
 
-FORMATO REQUERIDO de cada bloque:
+FORMATO REQUERIDO de cada bloque (tipo "${lesson.lesson_type}"):
 ${schemaHint}
 
-Devuelve entre 4 y 10 bloques de calidad, con contenido REAL (no placeholders).`;
-  const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_LESSON_TOOL, {
-    temperature: 0.6,
-    maxTokens: 6000,
-  });
-  return Array.isArray(result?.blocks) ? result.blocks : [];
+Devuelve entre 4 y 10 bloques de calidad real (no placeholders).`;
+
+  // Try up to 2 times. If the second attempt still produces invalid content,
+  // throw — caller will skip this lesson rather than insert a placeholder.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const text = attempt === 0
+      ? baseText
+      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: tu salida no contenía bloques válidos del tipo "${lesson.lesson_type}". Esta vez SOLO devuelve bloques con la forma exacta indicada arriba.`;
+    const result = await callAi(
+      [{ role: "user", content: [{ type: "text", text }] }],
+      MATERIALIZE_LESSON_TOOL,
+      { temperature: attempt === 0 ? 0.55 : 0.35, maxTokens: 6000 },
+    );
+    const blocks = Array.isArray(result?.blocks) ? result.blocks : [];
+    if (blocksAreValid(lesson.lesson_type, blocks)) return blocks;
+  }
+  throw new Error(`Lesson "${lesson.title}" produced no valid blocks for type ${lesson.lesson_type}`);
 }
 
 async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any[]) {
