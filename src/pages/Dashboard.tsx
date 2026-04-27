@@ -12,6 +12,7 @@ import { NumberTicker } from "@/components/magic/NumberTicker";
 import { KibboExpression } from "@/components/KibboExpression";
 import { StreakWidget } from "@/components/StreakWidget";
 import { DailyQuestsWidget } from "@/components/DailyQuestsWidget";
+import { PracticeCTA } from "@/components/PracticeCTA";
 import { Link } from "react-router-dom";
 
 const fadeIn = {
@@ -206,6 +207,8 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
           <StatCard key={stat.label} stat={stat} index={i} />
         ))}
       </div>
+
+      <PracticeCTA />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <StreakWidget

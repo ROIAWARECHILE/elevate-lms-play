@@ -25,6 +25,7 @@ import AdminSettings from "./pages/admin/AdminSettings";
 import QuizView from "./pages/QuizView";
 import Review from "./pages/Review";
 import Dictionary from "./pages/Dictionary";
+import Practice from "./pages/Practice";
 import { AppLayout } from "./components/AppLayout";
 import NotFound from "./pages/NotFound";
 
@@ -55,6 +56,7 @@ const App = () => (
               <Route path="profile" element={<Profile />} />
               <Route path="review" element={<Review />} />
               <Route path="dictionary" element={<Dictionary />} />
+              <Route path="practice" element={<Practice />} />
 
               {/* Admin routes */}
               <Route path="admin/courses" element={<AdminCourses />} />

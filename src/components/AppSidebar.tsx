@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, BookOpen, Trophy, User, Settings,
-  Users, BarChart3, Sparkles, LogOut, Zap, Flame, RefreshCw, BookMarked
+  Users, BarChart3, Sparkles, LogOut, Zap, Flame, RefreshCw, BookMarked, Brain
 } from "lucide-react";
 import kibboLogo from "@/assets/kibbo-mascot.png";
 import { NavLink } from "@/components/NavLink";
@@ -19,11 +19,14 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useSrsDueCount } from "@/hooks/useSRS";
 
 const collaboratorItems = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard, walkthrough: "nav-dashboard" },
   { title: "Mis Cursos", url: "/app/courses", icon: BookOpen, walkthrough: "nav-courses" },
-  { title: "Repasar errores", url: "/app/review", icon: RefreshCw },
+  { title: "Práctica diaria", url: "/app/practice", icon: Brain, badgeKey: "due" },
+  { title: "Errores marcados", url: "/app/review", icon: RefreshCw },
   { title: "Diccionario", url: "/app/dictionary", icon: BookMarked },
   { title: "Ranking", url: "/app/leaderboard", icon: Trophy, walkthrough: "nav-leaderboard" },
   { title: "Perfil", url: "/app/profile", icon: User, walkthrough: "nav-profile" },
@@ -35,7 +38,8 @@ const adminItems = [
   { title: "Crear con IA", url: "/app/admin/courses/studio", icon: Sparkles, walkthrough: "nav-create-course" },
   { title: "Usuarios", url: "/app/admin/users", icon: Users },
   { title: "Analytics", url: "/app/admin/analytics", icon: BarChart3 },
-  { title: "Repasar errores", url: "/app/review", icon: RefreshCw },
+  { title: "Práctica diaria", url: "/app/practice", icon: Brain, badgeKey: "due" },
+  { title: "Errores marcados", url: "/app/review", icon: RefreshCw },
   { title: "Diccionario", url: "/app/dictionary", icon: BookMarked },
   { title: "Ranking", url: "/app/leaderboard", icon: Trophy, walkthrough: "nav-leaderboard" },
   { title: "Configuración", url: "/app/admin/settings", icon: Settings },
@@ -46,6 +50,7 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const { profile, isAdmin, signOut } = useAuth();
+  const { count: dueCount } = useSrsDueCount();
 
   const items = isAdmin ? adminItems : collaboratorItems;
 
@@ -100,7 +105,12 @@ export function AppSidebar() {
                       {...(item.walkthrough ? { "data-walkthrough": item.walkthrough } : {})}
                     >
                       <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
+                      {!collapsed && <span className="flex-1">{item.title}</span>}
+                      {!collapsed && (item as any).badgeKey === "due" && dueCount > 0 && (
+                        <Badge className="ml-auto bg-destructive text-destructive-foreground text-[10px] h-5 min-w-5 px-1.5">
+                          {dueCount}
+                        </Badge>
+                      )}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
