@@ -620,33 +620,38 @@ Deno.serve(async (req) => {
       const supabase = getServiceClient();
 
       // Run all lesson generations in parallel (bounded by AI gateway concurrency).
+      // Failed lessons are SKIPPED (not inserted as placeholders) so the module
+      // never contains empty lessons. We report skipped titles back to the client.
       const lessonResults = await Promise.all(
         (mod.lessons || []).map(async (lesson: any) => {
           try {
             const blocks = await stepMaterializeLesson(brief, mod.title, lesson);
-            return { lesson, blocks };
+            return { lesson, blocks, ok: true as const };
           } catch (e) {
-            console.error("Lesson materialize failed:", lesson.title, e);
-            return {
-              lesson,
-              blocks: [{ type: "paragraph", text: lesson.objective || "Contenido pendiente." }],
-            };
+            console.error("Lesson materialize failed (skipping):", lesson.title, e);
+            return { lesson, blocks: [], ok: false as const };
           }
         }),
       );
 
-      // Insert lessons sequentially (cheap DB ops, preserves order).
-      for (let li = 0; li < lessonResults.length; li++) {
-        const { lesson, blocks } = lessonResults[li];
+      // Insert ONLY lessons that produced valid content. Preserves order via sort_order.
+      const skipped: string[] = [];
+      let inserted = 0;
+      for (const { lesson, blocks, ok } of lessonResults) {
+        if (!ok || blocks.length === 0) {
+          skipped.push(lesson.title);
+          continue;
+        }
         await supabase.from("lessons").insert({
           module_id: moduleId,
           title: lesson.title,
           lesson_type: lesson.lesson_type || "reading",
           content: { blocks },
           content_type: "text",
-          sort_order: li,
+          sort_order: inserted,
           xp_reward: 10,
         });
+        inserted++;
       }
 
       // Quiz per module (separate AI call, but module already done so safe).
