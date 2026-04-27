@@ -53,9 +53,11 @@ interface Module {
 export default function EditCourse() {
   const { courseId } = useParams();
   const { toast } = useToast();
+  const { profile } = useAuth();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyLessonId, setBusyLessonId] = useState<string | null>(null);
 
   const fetchData = async () => {
     const [courseRes, modulesRes] = await Promise.all([
