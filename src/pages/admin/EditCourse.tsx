@@ -387,7 +387,7 @@ export default function EditCourse() {
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground italic">
-                            Sin bloques. Genera esta lección desde Course Studio (próximamente) o cambia el tipo a "Lectura" para editarla como texto.
+                            Sin bloques aún. Pulsa el botón <Wand2 className="w-3 h-3 inline" /> para generar contenido con IA, o cambia el tipo a "Lectura".
                           </p>
                         )}
                       </div>
