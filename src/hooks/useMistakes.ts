@@ -20,11 +20,9 @@ export function useMistakes() {
   const { user, profile } = useAuth();
   const { toast } = useToast();
 
-  const addMistake = useCallback(
+  const _persist = useCallback(
     async (payload: MistakePayload) => {
       if (!user || !profile?.company_id) return false;
-
-      // Deduplicar por (user, lesson, question, correct)
       try {
         const { data: existing } = await supabase
           .from("user_mistakes")
@@ -58,23 +56,32 @@ export function useMistakes() {
             explanation: payload.explanation ?? null,
           });
         }
-
-        toast({
-          title: "Añadido a repaso",
-          description: "Lo encontrarás en Repasar errores.",
-        });
         return true;
-      } catch (e: any) {
-        toast({
-          title: "No se pudo añadir",
-          description: e?.message ?? "Error desconocido",
-          variant: "destructive",
-        });
+      } catch {
         return false;
       }
     },
-    [user, profile, toast],
+    [user, profile],
   );
 
-  return { addMistake };
+  const addMistake = useCallback(
+    async (payload: MistakePayload) => {
+      const ok = await _persist(payload);
+      if (ok) {
+        toast({ title: "Añadido a repaso", description: "Lo encontrarás en Repasar errores." });
+      } else {
+        toast({ title: "No se pudo añadir", variant: "destructive" });
+      }
+      return ok;
+    },
+    [_persist, toast],
+  );
+
+  /** Igual que addMistake pero sin toast — para registro automático tras 2 fallos. */
+  const addMistakeSilent = useCallback(
+    (payload: MistakePayload) => _persist(payload),
+    [_persist],
+  );
+
+  return { addMistake, addMistakeSilent };
 }
