@@ -129,6 +129,54 @@ export default function EditCourse() {
     toast({ title: "Tipo actualizado", description: LESSON_TYPE_META[newType].label });
   };
 
+  const regenerateLesson = async (lessonId: string, mi: number, li: number) => {
+    if (!profile?.company_id) return;
+    setBusyLessonId(lessonId);
+    try {
+      const { data, error } = await supabase.functions.invoke("regenerate-lesson", {
+        body: { lessonId, companyId: profile.company_id, mode: "regenerate" },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Falló la regeneración");
+      const updated = [...modules];
+      updated[mi].lessons[li] = {
+        ...updated[mi].lessons[li],
+        title: data.lesson.title,
+        lesson_type: data.lesson.lesson_type,
+        content: data.lesson.content,
+      };
+      setModules(updated);
+      toast({ title: "Lección regenerada", description: "Contenido actualizado con IA." });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyLessonId(null);
+    }
+  };
+
+  const convertLessonType = async (lessonId: string, newType: LessonType, mi: number, li: number) => {
+    if (!profile?.company_id) return;
+    setBusyLessonId(lessonId);
+    try {
+      const { data, error } = await supabase.functions.invoke("regenerate-lesson", {
+        body: { lessonId, companyId: profile.company_id, mode: "convert", newType },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Falló la conversión");
+      const updated = [...modules];
+      updated[mi].lessons[li] = {
+        ...updated[mi].lessons[li],
+        title: data.lesson.title,
+        lesson_type: data.lesson.lesson_type,
+        content: data.lesson.content,
+      };
+      setModules(updated);
+      toast({ title: "Convertido a " + LESSON_TYPE_META[newType].label });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyLessonId(null);
+    }
+  };
+
   const deleteLesson = async (lessonId: string, mi: number, li: number) => {
     await supabase.from("lessons").delete().eq("id", lessonId);
     const updated = [...modules];
