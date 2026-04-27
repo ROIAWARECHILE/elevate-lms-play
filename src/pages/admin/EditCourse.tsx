@@ -314,7 +314,7 @@ export default function EditCourse() {
                         value={lessonType}
                         onValueChange={(v) => updateLessonType(lesson.id, v as LessonType, mi, li)}
                       >
-                        <SelectTrigger className="w-44 h-9">
+                        <SelectTrigger className="w-40 h-9">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -325,6 +325,39 @@ export default function EditCourse() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <Select
+                        value=""
+                        onValueChange={(v) => convertLessonType(lesson.id, v as LessonType, mi, li)}
+                        disabled={busyLessonId === lesson.id}
+                      >
+                        <SelectTrigger className="w-36 h-9" title="Convertir con IA al tipo seleccionado, regenerando el contenido">
+                          <span className="flex items-center gap-1 text-xs">
+                            <Shuffle className="w-3.5 h-3.5" /> Convertir IA
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Object.keys(LESSON_TYPE_META) as LessonType[])
+                            .filter((t) => t !== lessonType)
+                            .map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {LESSON_TYPE_META[t].label}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => regenerateLesson(lesson.id, mi, li)}
+                        disabled={busyLessonId === lesson.id}
+                        title="Regenerar contenido con IA"
+                      >
+                        {busyLessonId === lesson.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                        ) : (
+                          <Wand2 className="w-4 h-4 text-primary" />
+                        )}
+                      </Button>
                       <Button variant="ghost" size="icon" onClick={() => deleteLesson(lesson.id, mi, li)}>
                         <Trash2 className="w-4 h-4 text-destructive" />
                       </Button>
