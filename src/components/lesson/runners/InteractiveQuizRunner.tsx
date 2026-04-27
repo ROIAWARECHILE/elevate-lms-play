@@ -61,6 +61,7 @@ function QuizItem({ block, idx }: { block: InteractiveQuizBlock; idx: number }) 
     case "order_steps": return <OrderSteps block={block} idx={idx} />;
     case "sort_into_buckets": return <SortIntoBuckets block={block} idx={idx} />;
     case "highlight_terms": return <HighlightTerms block={block} idx={idx} />;
+    case "tap_to_complete": return <TapToComplete block={block} idx={idx} />;
     default: return null;
   }
 }
