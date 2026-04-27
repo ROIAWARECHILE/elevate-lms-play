@@ -751,6 +751,14 @@ export type Database = {
       join_company_by_code: { Args: { _code: string }; Returns: string }
       join_company_by_slug: { Args: { _slug: string }; Returns: string }
       reject_user: { Args: { _target_user_id: string }; Returns: undefined }
+      remove_user_from_company: {
+        Args: { _target_user_id: string }
+        Returns: undefined
+      }
+      reset_user_progress: {
+        Args: { _target_user_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "collaborator"
