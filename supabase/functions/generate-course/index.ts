@@ -31,28 +31,89 @@ function getAiConfig() {
   };
 }
 
-async function callAi(messages: any[], tool: any, opts: { temperature?: number; maxTokens?: number } = {}) {
+async function callAi(
+  messages: any[],
+  tool: any,
+  opts: { temperature?: number; maxTokens?: number; retries?: number } = {},
+) {
   const { apiKey, url, model } = getAiConfig();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages,
-      tools: [tool],
-      tool_choice: { type: "function", function: { name: tool.function.name } },
-      temperature: opts.temperature ?? 0.6,
-      max_tokens: opts.maxTokens ?? 16000,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`AI error (${res.status}): ${body.slice(0, 500)}`);
+  const maxRetries = opts.retries ?? 2;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Lower temperature on retries to make tool calling more deterministic
+    const temp = attempt === 0 ? (opts.temperature ?? 0.6) : Math.max(0.2, (opts.temperature ?? 0.6) - 0.2 * attempt);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages,
+          tools: [tool],
+          tool_choice: { type: "function", function: { name: tool.function.name } },
+          temperature: temp,
+          max_tokens: opts.maxTokens ?? 16000,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        // Retry on transient errors
+        if (res.status === 429 || res.status >= 500) {
+          lastErr = new Error(`AI error (${res.status}): ${body.slice(0, 200)}`);
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          continue;
+        }
+        throw new Error(`AI error (${res.status}): ${body.slice(0, 500)}`);
+      }
+      const data = await res.json();
+      const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+      if (!toolCall) {
+        lastErr = new Error("AI did not return tool call");
+        continue; // retry
+      }
+      try {
+        return JSON.parse(toolCall.function.arguments);
+      } catch (e) {
+        lastErr = new Error("AI returned invalid JSON in tool call");
+        continue;
+      }
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      if (attempt === maxRetries) throw lastErr;
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
   }
-  const data = await res.json();
-  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!toolCall) throw new Error("AI did not return tool call");
-  return JSON.parse(toolCall.function.arguments);
+  throw lastErr || new Error("AI call failed");
+}
+
+// Validate that generated blocks actually contain content for the given lesson_type.
+function blocksAreValid(lessonType: string, blocks: any[]): boolean {
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  const has = (t: string) => blocks.some((b) => b?.type === t);
+  switch (lessonType) {
+    case "concept":
+      return blocks.some((b) => b?.type === "term" && b.term && b.definition);
+    case "flashcards":
+      return blocks.some((b) => b?.type === "flashcard" && b.front && b.back);
+    case "steps":
+      return blocks.some((b) => b?.type === "step" && b.title);
+    case "comparison":
+      return blocks.some(
+        (b) => b?.type === "comparison_table" && Array.isArray(b.headers) && Array.isArray(b.rows) && b.rows.length > 0,
+      );
+    case "case_study":
+      return has("scenario") || has("question");
+    case "sop_walkthrough":
+      return blocks.some((b) => b?.type === "sop_step" && b.title);
+    case "interactive_quiz":
+      return blocks.some((b) =>
+        ["mc", "true_false", "fill_blank", "match_pairs", "order_steps", "sort_into_buckets", "highlight_terms", "tap_to_complete"].includes(b?.type),
+      );
+    case "reading":
+    default:
+      return blocks.some((b) => (b?.type === "paragraph" || b?.type === "heading") && b.text);
+  }
 }
 
 // ---------- Tool schemas ----------
