@@ -5,7 +5,7 @@
 //        highlight_terms (click toggle).
 // Tras fallar permite añadir el ejercicio a "Repasar errores".
 // =====================================================================
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useParams } from "react-router-dom";
 import {
@@ -129,7 +129,7 @@ function ItemShell({
 }
 
 function useMistakeReporter(blockType: string, question: string, correctAnswer: string, explanation?: string) {
-  const { addMistake } = useMistakes();
+  const { addMistake, addMistakeSilent } = useMistakes();
   const { courseId, lessonId } = useParams();
   const [marked, setMarked] = useState(false);
   const mark = async (userAnswer?: string) => {
@@ -144,7 +144,31 @@ function useMistakeReporter(blockType: string, question: string, correctAnswer: 
     });
     if (ok) setMarked(true);
   };
-  return { marked, mark };
+  /** Auto-marca en silencio (usado tras un fallo confirmado). */
+  const autoMark = async (userAnswer?: string) => {
+    if (marked) return;
+    const ok = await addMistakeSilent({
+      blockType,
+      question,
+      userAnswer: userAnswer ?? null,
+      correctAnswer,
+      explanation: explanation ?? null,
+      lessonId: lessonId ?? null,
+      courseId: courseId ?? null,
+    });
+    if (ok) setMarked(true);
+  };
+  return { marked, mark, autoMark };
+}
+
+/** Hook auxiliar: dispara autoMark cuando el usuario ha fallado y han pasado N segundos. */
+function useAutoMistake(failed: boolean, autoMark: () => void, delayMs = 1500) {
+  useEffect(() => {
+    if (!failed) return;
+    const t = setTimeout(() => autoMark(), delayMs);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failed]);
 }
 
 // ---------- Multiple Choice ----------
