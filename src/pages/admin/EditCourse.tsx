@@ -7,11 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Loader2, PlusCircle, GripVertical, Trash2, Brain, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, PlusCircle, GripVertical, Trash2, Brain, Sparkles, Wand2, Shuffle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { LESSON_TYPE_META, type LessonType } from "@/lib/courseSchema";
 import { LessonRenderer } from "@/components/lesson/LessonRenderer";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Question {
   id?: string;
@@ -52,9 +53,11 @@ interface Module {
 export default function EditCourse() {
   const { courseId } = useParams();
   const { toast } = useToast();
+  const { profile } = useAuth();
   const [course, setCourse] = useState<any>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyLessonId, setBusyLessonId] = useState<string | null>(null);
 
   const fetchData = async () => {
     const [courseRes, modulesRes] = await Promise.all([
@@ -124,6 +127,54 @@ export default function EditCourse() {
     updated[mi].lessons[li] = { ...updated[mi].lessons[li], lesson_type: newType };
     setModules(updated);
     toast({ title: "Tipo actualizado", description: LESSON_TYPE_META[newType].label });
+  };
+
+  const regenerateLesson = async (lessonId: string, mi: number, li: number) => {
+    if (!profile?.company_id) return;
+    setBusyLessonId(lessonId);
+    try {
+      const { data, error } = await supabase.functions.invoke("regenerate-lesson", {
+        body: { lessonId, companyId: profile.company_id, mode: "regenerate" },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Falló la regeneración");
+      const updated = [...modules];
+      updated[mi].lessons[li] = {
+        ...updated[mi].lessons[li],
+        title: data.lesson.title,
+        lesson_type: data.lesson.lesson_type,
+        content: data.lesson.content,
+      };
+      setModules(updated);
+      toast({ title: "Lección regenerada", description: "Contenido actualizado con IA." });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyLessonId(null);
+    }
+  };
+
+  const convertLessonType = async (lessonId: string, newType: LessonType, mi: number, li: number) => {
+    if (!profile?.company_id) return;
+    setBusyLessonId(lessonId);
+    try {
+      const { data, error } = await supabase.functions.invoke("regenerate-lesson", {
+        body: { lessonId, companyId: profile.company_id, mode: "convert", newType },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Falló la conversión");
+      const updated = [...modules];
+      updated[mi].lessons[li] = {
+        ...updated[mi].lessons[li],
+        title: data.lesson.title,
+        lesson_type: data.lesson.lesson_type,
+        content: data.lesson.content,
+      };
+      setModules(updated);
+      toast({ title: "Convertido a " + LESSON_TYPE_META[newType].label });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyLessonId(null);
+    }
   };
 
   const deleteLesson = async (lessonId: string, mi: number, li: number) => {
@@ -263,7 +314,7 @@ export default function EditCourse() {
                         value={lessonType}
                         onValueChange={(v) => updateLessonType(lesson.id, v as LessonType, mi, li)}
                       >
-                        <SelectTrigger className="w-44 h-9">
+                        <SelectTrigger className="w-40 h-9">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -274,6 +325,39 @@ export default function EditCourse() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <Select
+                        value=""
+                        onValueChange={(v) => convertLessonType(lesson.id, v as LessonType, mi, li)}
+                        disabled={busyLessonId === lesson.id}
+                      >
+                        <SelectTrigger className="w-36 h-9" title="Convertir con IA al tipo seleccionado, regenerando el contenido">
+                          <span className="flex items-center gap-1 text-xs">
+                            <Shuffle className="w-3.5 h-3.5" /> Convertir IA
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Object.keys(LESSON_TYPE_META) as LessonType[])
+                            .filter((t) => t !== lessonType)
+                            .map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {LESSON_TYPE_META[t].label}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => regenerateLesson(lesson.id, mi, li)}
+                        disabled={busyLessonId === lesson.id}
+                        title="Regenerar contenido con IA"
+                      >
+                        {busyLessonId === lesson.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                        ) : (
+                          <Wand2 className="w-4 h-4 text-primary" />
+                        )}
+                      </Button>
                       <Button variant="ghost" size="icon" onClick={() => deleteLesson(lesson.id, mi, li)}>
                         <Trash2 className="w-4 h-4 text-destructive" />
                       </Button>
@@ -303,7 +387,7 @@ export default function EditCourse() {
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground italic">
-                            Sin bloques. Genera esta lección desde Course Studio (próximamente) o cambia el tipo a "Lectura" para editarla como texto.
+                            Sin bloques aún. Pulsa el botón <Wand2 className="w-3 h-3 inline" /> para generar contenido con IA, o cambia el tipo a "Lectura".
                           </p>
                         )}
                       </div>
