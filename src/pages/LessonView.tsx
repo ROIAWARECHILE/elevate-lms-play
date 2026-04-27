@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, CheckCircle2, Loader2, Zap } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, Loader2, Sparkles, Zap } from "lucide-react";
 import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
@@ -22,6 +22,8 @@ import { getLessonTypeMeta } from "@/lib/courseSchema";
 import { Badge } from "@/components/ui/badge";
 import { useDictionaryAutoIndex } from "@/hooks/useDictionaryAutoIndex";
 import { useSrsAutoSeed } from "@/hooks/useSrsAutoSeed";
+import { useSkillProfile } from "@/hooks/useSkillProfile";
+import { estimateLessonMinutes } from "@/lib/lessonDuration";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -42,6 +44,8 @@ export default function LessonView() {
   useDictionaryAutoIndex(lesson, courseId);
   // Al completar la lección, sembramos sus conceptos/quizzes en el SRS del usuario.
   useSrsAutoSeed(lesson, courseId, completed);
+  // Perfil adaptativo (mastery + dificultad inferida)
+  const { profile: skill } = useSkillProfile(courseId);
 
   useEffect(() => {
     const fetch = async () => {
@@ -160,11 +164,28 @@ export default function LessonView() {
         <Card className="shadow-card">
           <CardContent className="p-8">
             <div className="mb-6">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <p className="text-xs text-muted-foreground">{lesson?.modules?.title}</p>
                 {lesson?.lesson_type && lesson.lesson_type !== "reading" && (
                   <Badge variant="secondary" className="text-[10px] h-5">
                     {getLessonTypeMeta(lesson.lesson_type).label}
+                  </Badge>
+                )}
+                {lesson && (
+                  <Badge variant="outline" className="text-[10px] h-5 gap-1">
+                    <Clock className="w-3 h-3" /> {estimateLessonMinutes(lesson)} min
+                  </Badge>
+                )}
+                {skill && skill.total_items >= 5 && (
+                  <Badge variant="outline" className="text-[10px] h-5 gap-1 border-primary/40 text-primary">
+                    <Sparkles className="w-3 h-3" />
+                    {skill.difficulty_preference === "advanced"
+                      ? "Modo avanzado"
+                      : skill.difficulty_preference === "intermediate"
+                      ? "Modo intermedio"
+                      : "Modo básico"}
+                    {" · "}
+                    {Math.round(skill.mastery * 100)}%
                   </Badge>
                 )}
               </div>

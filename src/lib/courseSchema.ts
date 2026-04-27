@@ -12,7 +12,8 @@ export type LessonType =
   | "comparison"
   | "case_study"
   | "interactive_quiz"
-  | "video_embed";
+  | "video_embed"
+  | "sop_walkthrough";
 
 // ---------- Bloques de cada tipo ----------
 
@@ -102,7 +103,29 @@ export type InteractiveQuizBlock =
       terms: string[]; // términos clave (palabras o frases) que deben marcarse
       distractors?: string[]; // otras palabras que NO deben marcarse
       explanation?: string;
+    }
+  | {
+      type: "tap_to_complete";
+      // Frase con huecos marcados con ___ (uno o varios).
+      sentence: string;
+      // Banco de palabras a tocar (incluye correctas + distractores).
+      bank: string[];
+      // Palabras correctas en orden de aparición.
+      correct: string[];
+      explanation?: string;
     };
+
+// ---------- SOP walkthrough (procedimiento operativo paso a paso) ----------
+
+export type SopStepBlock = {
+  type: "sop_step";
+  n: number;
+  title: string;
+  description: string;
+  warning?: string;        // ⚠ riesgo / precaución
+  image_url?: string;      // foto opcional
+  must_check?: boolean;    // exige tildar antes de avanzar
+};
 
 export type VideoBlock = {
   type: "video";
@@ -119,7 +142,8 @@ export type LessonBlock =
   | ComparisonBlock
   | CaseStudyBlock
   | InteractiveQuizBlock
-  | VideoBlock;
+  | VideoBlock
+  | SopStepBlock;
 
 export interface LessonContent {
   blocks: LessonBlock[];
@@ -140,6 +164,7 @@ export const LESSON_TYPE_META: Record<
   case_study: { label: "Caso práctico", icon: "Briefcase", description: "Escenario aplicado con preguntas" },
   interactive_quiz: { label: "Práctica", icon: "Brain", description: "Mini-ejercicios interactivos tipo Duolingo" },
   video_embed: { label: "Video", icon: "Video", description: "Video externo embebido" },
+  sop_walkthrough: { label: "Procedimiento", icon: "ClipboardCheck", description: "Paso a paso operativo con tildes obligatorias" },
 };
 
 export function getLessonTypeMeta(type?: string | null) {

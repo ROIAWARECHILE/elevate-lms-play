@@ -13,6 +13,7 @@ import { ComparisonRunner } from "./runners/ComparisonRunner";
 import { CaseStudyRunner } from "./runners/CaseStudyRunner";
 import { InteractiveQuizRunner } from "./runners/InteractiveQuizRunner";
 import { VideoRunner } from "./runners/VideoRunner";
+import { SOPWalkthroughRunner } from "./runners/SOPWalkthroughRunner";
 
 interface Props {
   lesson: { lesson_type?: string | null; content?: any };
@@ -50,9 +51,16 @@ export function LessonRenderer({ lesson }: Props) {
             blocks.filter((b) =>
               b.type === "mc" || b.type === "true_false" || b.type === "fill_blank" ||
               b.type === "match_pairs" || b.type === "order_steps" ||
-              b.type === "sort_into_buckets" || b.type === "highlight_terms"
+              b.type === "sort_into_buckets" || b.type === "highlight_terms" ||
+              b.type === "tap_to_complete"
             ) as any
           }
+        />
+      );
+    case "sop_walkthrough":
+      return (
+        <SOPWalkthroughRunner
+          blocks={blocks.filter((b) => b.type === "sop_step") as any}
         />
       );
     case "video_embed": {

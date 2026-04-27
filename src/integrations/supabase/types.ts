@@ -726,6 +726,39 @@ export type Database = {
         }
         Relationships: []
       }
+      user_skill_profile: {
+        Row: {
+          avg_response_ms: number | null
+          company_id: string
+          course_id: string
+          difficulty_preference: string
+          mastery: number
+          total_items: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avg_response_ms?: number | null
+          company_id: string
+          course_id: string
+          difficulty_preference?: string
+          mastery?: number
+          total_items?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avg_response_ms?: number | null
+          company_id?: string
+          course_id?: string
+          difficulty_preference?: string
+          mastery?: number
+          total_items?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_xp_log: {
         Row: {
           company_id: string
@@ -810,6 +843,10 @@ export type Database = {
       }
       join_company_by_code: { Args: { _code: string }; Returns: string }
       join_company_by_slug: { Args: { _slug: string }; Returns: string }
+      recalc_skill_profile: {
+        Args: { _course_id: string; _user_id: string }
+        Returns: undefined
+      }
       reject_user: { Args: { _target_user_id: string }; Returns: undefined }
       remove_user_from_company: {
         Args: { _target_user_id: string }
