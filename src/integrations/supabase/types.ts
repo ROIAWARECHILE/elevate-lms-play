@@ -86,6 +86,42 @@ export type Database = {
         }
         Relationships: []
       }
+      course_dictionary: {
+        Row: {
+          company_id: string
+          course_id: string
+          created_at: string
+          definition: string
+          example: string | null
+          id: string
+          lesson_id: string
+          term: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          course_id: string
+          created_at?: string
+          definition: string
+          example?: string | null
+          id?: string
+          lesson_id: string
+          term: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          course_id?: string
+          created_at?: string
+          definition?: string
+          example?: string | null
+          id?: string
+          lesson_id?: string
+          term?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       course_sources: {
         Row: {
           company_id: string
@@ -473,6 +509,63 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_mistakes: {
+        Row: {
+          block_type: string
+          company_id: string
+          correct_answer: string
+          course_id: string | null
+          created_at: string
+          explanation: string | null
+          id: string
+          last_failed_at: string
+          last_reviewed_at: string | null
+          lesson_id: string | null
+          mastered: boolean
+          question: string
+          times_failed: number
+          times_reviewed: number
+          user_answer: string | null
+          user_id: string
+        }
+        Insert: {
+          block_type: string
+          company_id: string
+          correct_answer: string
+          course_id?: string | null
+          created_at?: string
+          explanation?: string | null
+          id?: string
+          last_failed_at?: string
+          last_reviewed_at?: string | null
+          lesson_id?: string | null
+          mastered?: boolean
+          question: string
+          times_failed?: number
+          times_reviewed?: number
+          user_answer?: string | null
+          user_id: string
+        }
+        Update: {
+          block_type?: string
+          company_id?: string
+          correct_answer?: string
+          course_id?: string | null
+          created_at?: string
+          explanation?: string | null
+          id?: string
+          last_failed_at?: string
+          last_reviewed_at?: string | null
+          lesson_id?: string | null
+          mastered?: boolean
+          question?: string
+          times_failed?: number
+          times_reviewed?: number
+          user_answer?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       user_progress: {
         Row: {

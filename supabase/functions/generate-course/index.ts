@@ -315,7 +315,14 @@ const LESSON_BLOCK_HINTS: Record<string, string> = {
   steps: `{ "type": "step", "n": 1, "title": "...", "description": "...", "tip": "..." }`,
   comparison: `Un solo bloque: { "type": "comparison_table", "headers": ["Aspecto","Opción A","Opción B"], "rows": [{"label":"...","cells":["...","..."]}] }`,
   case_study: `{ "type": "scenario", "title": "...", "text": "..." } | { "type": "question", "text": "..." } | { "type": "reflection", "text": "..." }`,
-  interactive_quiz: `{ "type": "mc", "question": "...", "options": ["a","b","c","d"], "correct": "a", "explanation": "..." } | { "type": "true_false", "question": "...", "correct": true } | { "type": "fill_blank", "sentence": "El ___ es...", "correct": "..." }`,
+  interactive_quiz: `Genera 4-6 ejercicios variados estilo Duolingo para adultos. Tipos disponibles (USA AL MENOS 3 DISTINTOS):
+- { "type": "mc", "question": "...", "options": ["a","b","c","d"], "correct": "a", "explanation": "..." }
+- { "type": "true_false", "question": "...", "correct": true, "explanation": "..." }
+- { "type": "fill_blank", "sentence": "El ___ es ___.", "correct": ["valor1","valor2"], "explanation": "..." }  // usa ___ por hueco; correct puede ser string (1 hueco) o array (varios)
+- { "type": "match_pairs", "pairs": [{"left":"Concepto","right":"Definición"}, ...], "explanation": "..." }  // 3-5 pares
+- { "type": "order_steps", "steps": ["Paso 1","Paso 2","Paso 3","Paso 4"], "explanation": "..." }  // orden correcto
+- { "type": "sort_into_buckets", "buckets": ["Categoría A","Categoría B"], "items": [{"text":"item","bucket":"Categoría A"}, ...], "explanation": "..." }
+- { "type": "highlight_terms", "sentence": "Texto donde hay que marcar las palabras clave.", "terms": ["palabras","clave"], "distractors": ["otras"], "explanation": "..." }`,
 };
 
 // ---------- Legacy single-shot (back-compat) ----------

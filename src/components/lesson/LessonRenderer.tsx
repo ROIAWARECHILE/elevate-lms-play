@@ -49,7 +49,8 @@ export function LessonRenderer({ lesson }: Props) {
           blocks={
             blocks.filter((b) =>
               b.type === "mc" || b.type === "true_false" || b.type === "fill_blank" ||
-              b.type === "match_pairs" || b.type === "order_steps"
+              b.type === "match_pairs" || b.type === "order_steps" ||
+              b.type === "sort_into_buckets" || b.type === "highlight_terms"
             ) as any
           }
         />

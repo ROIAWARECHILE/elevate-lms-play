@@ -16,7 +16,6 @@ import LessonView from "./pages/LessonView";
 import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
-import CreateCourse from "./pages/admin/CreateCourse";
 import GenerateCourse from "./pages/admin/GenerateCourse";
 import CourseStudio from "./pages/admin/CourseStudio";
 import EditCourse from "./pages/admin/EditCourse";
@@ -24,6 +23,8 @@ import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAnalytics from "./pages/admin/AdminAnalytics";
 import AdminSettings from "./pages/admin/AdminSettings";
 import QuizView from "./pages/QuizView";
+import Review from "./pages/Review";
+import Dictionary from "./pages/Dictionary";
 import { AppLayout } from "./components/AppLayout";
 import NotFound from "./pages/NotFound";
 
@@ -52,10 +53,13 @@ const App = () => (
               <Route path="courses/:courseId/quiz/:quizId" element={<QuizView />} />
               <Route path="leaderboard" element={<Leaderboard />} />
               <Route path="profile" element={<Profile />} />
-              
+              <Route path="review" element={<Review />} />
+              <Route path="dictionary" element={<Dictionary />} />
+
               {/* Admin routes */}
               <Route path="admin/courses" element={<AdminCourses />} />
-              <Route path="admin/courses/new" element={<CreateCourse />} />
+              {/* Crear curso ahora usa Course Studio (IA). Mantenemos /new como alias. */}
+              <Route path="admin/courses/new" element={<CourseStudio />} />
               <Route path="admin/courses/generate" element={<GenerateCourse />} />
               <Route path="admin/courses/studio" element={<CourseStudio />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />

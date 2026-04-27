@@ -49,7 +49,7 @@ export type StepBlock = {
 
 export type ComparisonBlock = {
   type: "comparison_table";
-  headers: string[]; // first col is the row label header
+  headers: string[];
   rows: { label: string; cells: string[] }[];
 };
 
@@ -58,12 +58,14 @@ export type CaseStudyBlock =
   | { type: "question"; text: string }
   | { type: "reflection"; text: string };
 
+// ---------- Bloques del Quiz interactivo (estilo Duolingo para adultos) ----------
+
 export type InteractiveQuizBlock =
   | {
       type: "mc";
       question: string;
       options: string[];
-      correct: string; // must match one of options
+      correct: string;
       explanation?: string;
     }
   | {
@@ -74,17 +76,32 @@ export type InteractiveQuizBlock =
     }
   | {
       type: "fill_blank";
-      sentence: string; // use ___ to mark blank
-      correct: string;
+      sentence: string; // usar ___ por cada hueco; admite múltiples
+      correct: string | string[]; // string para 1 hueco, array para varios
       explanation?: string;
     }
   | {
       type: "match_pairs";
       pairs: { left: string; right: string }[];
+      explanation?: string;
     }
   | {
       type: "order_steps";
-      steps: string[]; // correct order
+      steps: string[]; // orden correcto
+      explanation?: string;
+    }
+  | {
+      type: "sort_into_buckets";
+      buckets: string[]; // categorías
+      items: { text: string; bucket: string }[]; // bucket = nombre exacto en buckets
+      explanation?: string;
+    }
+  | {
+      type: "highlight_terms";
+      sentence: string;
+      terms: string[]; // términos clave (palabras o frases) que deben marcarse
+      distractors?: string[]; // otras palabras que NO deben marcarse
+      explanation?: string;
     };
 
 export type VideoBlock = {
@@ -106,7 +123,6 @@ export type LessonBlock =
 
 export interface LessonContent {
   blocks: LessonBlock[];
-  // legacy: some old lessons have content.text — kept for back-compat in renderers
   text?: string;
 }
 
@@ -122,7 +138,7 @@ export const LESSON_TYPE_META: Record<
   steps: { label: "Pasos", icon: "ListOrdered", description: "Procedimiento paso a paso" },
   comparison: { label: "Comparativa", icon: "Columns3", description: "Tabla comparativa de elementos" },
   case_study: { label: "Caso práctico", icon: "Briefcase", description: "Escenario aplicado con preguntas" },
-  interactive_quiz: { label: "Quiz interactivo", icon: "Brain", description: "Mini-preguntas dentro de la lección" },
+  interactive_quiz: { label: "Práctica", icon: "Brain", description: "Mini-ejercicios interactivos tipo Duolingo" },
   video_embed: { label: "Video", icon: "Video", description: "Video externo embebido" },
 };
 
@@ -135,10 +151,6 @@ export function isLessonType(v: unknown): v is LessonType {
   return typeof v === "string" && v in LESSON_TYPE_META;
 }
 
-/**
- * Defensive accessor: legacy lessons may have content.blocks of legacy {heading|paragraph}
- * shape only. We always return a LessonBlock[] (possibly empty).
- */
 export function getLessonBlocks(lesson: { content?: any }): LessonBlock[] {
   const blocks = lesson?.content?.blocks;
   if (Array.isArray(blocks)) return blocks as LessonBlock[];

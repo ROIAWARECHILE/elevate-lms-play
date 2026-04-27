@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PlusCircle, BookOpen, MoreVertical, Clock, Eye, EyeOff, Sparkles } from "lucide-react";
+import { BookOpen, Clock, Eye, EyeOff, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -65,19 +65,9 @@ export default function AdminCourses() {
           <p className="text-muted-foreground">Crea y administra los cursos de tu empresa.</p>
         </div>
         <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link to="/app/admin/courses/new">
-              <PlusCircle className="w-4 h-4 mr-2" /> Crear curso
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link to="/app/admin/courses/generate">
-              <Sparkles className="w-4 h-4 mr-2" /> Generar rápido
-            </Link>
-          </Button>
           <Button asChild className="gradient-primary shadow-primary">
             <Link to="/app/admin/courses/studio">
-              <Sparkles className="w-4 h-4 mr-2" /> Course Studio
+              <Sparkles className="w-4 h-4 mr-2" /> Crear curso con IA
             </Link>
           </Button>
         </div>
@@ -96,8 +86,8 @@ export default function AdminCourses() {
             <h3 className="font-semibold text-lg mb-2">No hay cursos aún</h3>
             <p className="text-muted-foreground text-sm mb-4">Crea tu primer curso para empezar.</p>
             <Button asChild className="gradient-primary shadow-primary">
-              <Link to="/app/admin/courses/new">
-                <PlusCircle className="w-4 h-4 mr-2" /> Crear curso
+              <Link to="/app/admin/courses/studio">
+                <Sparkles className="w-4 h-4 mr-2" /> Crear curso con IA
               </Link>
             </Button>
           </CardContent>
