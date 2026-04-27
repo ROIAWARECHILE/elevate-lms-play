@@ -20,6 +20,7 @@ import { evaluateAchievements, type UnlockedAchievement } from "@/lib/achievemen
 import { LessonRenderer } from "@/components/lesson/LessonRenderer";
 import { getLessonTypeMeta } from "@/lib/courseSchema";
 import { Badge } from "@/components/ui/badge";
+import { useDictionaryAutoIndex } from "@/hooks/useDictionaryAutoIndex";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -37,6 +38,7 @@ export default function LessonView() {
   const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
 
   useHotkeys("left", () => navigate(-1), { preventDefault: true });
+  useDictionaryAutoIndex(lesson, courseId);
 
   useEffect(() => {
     const fetch = async () => {
