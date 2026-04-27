@@ -59,6 +59,12 @@ async function fetchStats(userId: string): Promise<UserStats> {
     }
   }
 
+  const srsRows = (srsRes.data ?? []) as Array<{ strength: number; total_reviews: number; total_correct: number }>;
+  const srsStrong = srsRows.filter((r) => (r.strength ?? 0) >= 0.8).length;
+  const srsReviews = srsRows.reduce((acc, r) => acc + (r.total_reviews ?? 0), 0);
+  // Aproximación de "racha de aciertos": máximo total_correct de un solo item.
+  const correctStreak = srsRows.reduce((acc, r) => Math.max(acc, r.total_correct ?? 0), 0);
+
   return {
     lessons_completed: lessons,
     quizzes_passed: passed,
@@ -67,6 +73,9 @@ async function fetchStats(userId: string): Promise<UserStats> {
     xp_total: profileRes.data?.xp_total ?? 0,
     level: profileRes.data?.level ?? 1,
     courses_completed: coursesCompleted,
+    srs_strong: srsStrong,
+    srs_reviews: srsReviews,
+    correct_streak: correctStreak,
   };
 }
 
