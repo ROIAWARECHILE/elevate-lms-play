@@ -432,52 +432,79 @@ export default function AdminUsers() {
           <Card className="shadow-card">
             <CardContent className="pt-6">
               {pendingUsers.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No hay solicitudes pendientes
-                </p>
+                <div className="text-center py-12">
+                  <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-success" />
+                  <p className="text-muted-foreground">No hay solicitudes pendientes</p>
+                </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nombre</TableHead>
-                      <TableHead>Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pendingUsers.map((u) => (
-                      <TableRow key={u.id}>
-                        <TableCell className="font-medium">{u.full_name || "Sin nombre"}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => approveUser(u.id)}
-                              disabled={approvingUser === u.id}
-                              className="gap-1"
-                            >
-                              {approvingUser === u.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="w-4 h-4" />
-                              )}
-                              Aprobar
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => rejectUser(u.id)}
-                              disabled={approvingUser === u.id}
-                              className="gap-1"
-                            >
-                              <XCircle className="w-4 h-4" />
-                              Rechazar
-                            </Button>
-                          </div>
-                        </TableCell>
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <p className="text-sm text-muted-foreground">
+                      {pendingUsers.length} solicitud{pendingUsers.length === 1 ? "" : "es"} esperando aprobación
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={approveAllPending}
+                      disabled={bulkApproving}
+                      className="gap-2"
+                    >
+                      {bulkApproving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4" />
+                      )}
+                      Aprobar a todos
+                    </Button>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nombre</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Solicitado</TableHead>
+                        <TableHead className="text-right">Acciones</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingUsers.map((u) => (
+                        <TableRow key={u.id}>
+                          <TableCell className="font-medium">{u.full_name || "Sin nombre"}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{u.email || "—"}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {formatRelative(u.requested_at)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => approveUser(u.id)}
+                                disabled={approvingUser === u.id || bulkApproving}
+                                className="gap-1"
+                              >
+                                {approvingUser === u.id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="w-4 h-4" />
+                                )}
+                                Aprobar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => rejectUser(u.id)}
+                                disabled={approvingUser === u.id || bulkApproving}
+                                className="gap-1"
+                              >
+                                <XCircle className="w-4 h-4" />
+                                Rechazar
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </>
               )}
             </CardContent>
           </Card>
