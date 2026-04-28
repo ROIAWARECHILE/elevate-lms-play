@@ -76,7 +76,7 @@ export function AppLayout() {
             </div>
             <CardTitle className="text-2xl">Esperando aprobación</CardTitle>
             <CardDescription>
-              Tu solicitud está pendiente de aprobación por el administrador de la empresa. Te notificaremos cuando tengas acceso.
+              Tu solicitud está pendiente de aprobación por el administrador de la empresa. Esta pantalla se actualizará automáticamente en cuanto te aprueben — no necesitas recargar.
             </CardDescription>
           </CardHeader>
           <CardContent>
