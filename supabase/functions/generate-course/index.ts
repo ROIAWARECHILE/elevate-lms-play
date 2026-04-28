@@ -539,7 +539,10 @@ Deno.serve(async (req) => {
 
     // ----- Mode: extract -----
     if (mode === "extract") {
-      const out = await stepExtract(sources || [], userNotes || "");
+      if (!Array.isArray(sources) || sources.length === 0) {
+        throw new Error("Debes proporcionar al menos una fuente para extraer conocimiento.");
+      }
+      const out = await stepExtract(sources, userNotes || "");
       return json({ brief: out });
     }
 
@@ -547,6 +550,12 @@ Deno.serve(async (req) => {
     if (mode === "outline") {
       if (!brief) throw new Error("Missing brief");
       if (!title) throw new Error("Missing title");
+      const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
+      const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
+      const procCount = Array.isArray(brief?.procedures) ? brief.procedures.length : 0;
+      if (conceptCount + factCount + procCount === 0) {
+        throw new Error("El brief no contiene material suficiente (0 conceptos, 0 hechos, 0 procedimientos). Agrega más fuentes.");
+      }
       const out = await stepOutline(brief, title, level, userNotes || "");
       return json({ outline: out });
     }
@@ -619,20 +628,26 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const supabase = getServiceClient();
 
-      // Run all lesson generations in parallel (bounded by AI gateway concurrency).
-      // Failed lessons are SKIPPED (not inserted as placeholders) so the module
-      // never contains empty lessons. We report skipped titles back to the client.
-      const lessonResults = await Promise.all(
-        (mod.lessons || []).map(async (lesson: any) => {
+      // Generate lessons with bounded concurrency (2 at a time) to avoid AI Gateway 429s.
+      const lessonsArr = (mod.lessons || []) as any[];
+      const lessonResults: Array<{ lesson: any; blocks: any[]; ok: boolean }> = new Array(lessonsArr.length);
+      const CONCURRENCY = 2;
+      let cursor = 0;
+      async function worker() {
+        while (true) {
+          const idx = cursor++;
+          if (idx >= lessonsArr.length) return;
+          const lesson = lessonsArr[idx];
           try {
             const blocks = await stepMaterializeLesson(brief, mod.title, lesson);
-            return { lesson, blocks, ok: true as const };
+            lessonResults[idx] = { lesson, blocks, ok: true };
           } catch (e) {
             console.error("Lesson materialize failed (skipping):", lesson.title, e);
-            return { lesson, blocks: [], ok: false as const };
+            lessonResults[idx] = { lesson, blocks: [], ok: false };
           }
-        }),
-      );
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, lessonsArr.length) }, worker));
 
       // Insert ONLY lessons that produced valid content. Preserves order via sort_order.
       const skipped: string[] = [];
@@ -699,6 +714,35 @@ Deno.serve(async (req) => {
       }
 
       return json({ ok: true, moduleId, inserted, skipped, deleted: inserted === 0 });
+    }
+
+    // ----- Mode: materialize_finalize (recompute totals after all modules processed) -----
+    if (mode === "materialize_finalize") {
+      const { courseId } = body;
+      if (!courseId) throw new Error("Missing courseId");
+      const supabase = getServiceClient();
+
+      // Count surviving modules + lessons
+      const { data: modulesRows } = await supabase
+        .from("modules").select("id").eq("course_id", courseId);
+      const moduleIds = (modulesRows || []).map((r: any) => r.id);
+      let lessonsCount = 0;
+      if (moduleIds.length) {
+        const { count } = await supabase
+          .from("lessons").select("id", { count: "exact", head: true })
+          .in("module_id", moduleIds);
+        lessonsCount = count || 0;
+      }
+
+      const xpReward = Math.max(50, moduleIds.length * 50);
+      const estimatedDuration = Math.max(5, lessonsCount * 5 + moduleIds.length * 5);
+
+      await supabase.from("courses").update({
+        xp_reward: xpReward,
+        estimated_duration_minutes: estimatedDuration,
+      }).eq("id", courseId);
+
+      return json({ ok: true, modulesCount: moduleIds.length, lessonsCount });
     }
 
     // ----- Legacy single-shot materialize (kept for back-compat, NOT recommended). -----

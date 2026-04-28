@@ -1,213 +1,62 @@
-## 🎯 Objetivo
+## Auditoría de Course Studio
 
-Transformar el sistema actual (creación + consumo de cursos) en un **motor de aprendizaje adaptativo profesional** que aplique los 9 principios pedagógicos: **Spaced Repetition, Retrieval Practice, Gamificación, Microlearning, Adaptive Learning, Learning by Doing, Feedback Inmediato, Habit Formation y Multimodal Learning**.
+Revisé el wizard (`src/pages/admin/CourseStudio.tsx`) y la edge function (`supabase/functions/generate-course/index.ts` + `fetch-source`). Los 4 pasos (Fuentes → Brief → Outline → Generar) funcionan en el camino feliz, pero hay varios fallos reales y debilidades de UX que conviene reparar de una pasada.
 
-Se aplica tanto a cursos creados por **chat** como por el **Course Studio con IA**.
+### Problemas detectados
 
----
+**Paso 0 — Fuentes**
+- No hay límite de tamaño/tipo: un PDF >20 MB rompe la edge function silenciosamente al codificarlo en base64 dentro del payload.
+- `addFiles` y `addExcel` no resetean el `<input file>`, así que no se puede volver a seleccionar el mismo archivo si se borró.
+- No se valida que la URL sea http/https antes de invocar `fetch-source` (el backend ya lo valida pero el error llega tarde y feo).
+- `addUrl` y `addText` no muestran feedback de éxito.
 
-## 🧱 Arquitectura propuesta (4 capas)
+**Paso 1 — Brief**
+- Si el brief queda vacío (sin conceptos/hechos) la UI lo deja pasar y el outline falla más adelante. Falta gate + aviso "material insuficiente, agregá más fuentes".
+- El textarea de "refinar brief" en realidad no re-extrae: solo muta `userNotes` y se usará en el outline. La etiqueta confunde.
 
-```
-┌─────────────────────────────────────────┐
-│  CORE ENGINE  — SRS + Memoria adaptativa │  ← nuevo
-├─────────────────────────────────────────┤
-│  EXPERIENCE   — Microlecciones + Quizzes │  ← refactor
-├─────────────────────────────────────────┤
-│  GAME LAYER   — XP, streaks, misiones    │  ← ya existe, se extiende
-├─────────────────────────────────────────┤
-│  CONTEXT LAYER — Simulaciones / SOPs     │  ← nuevo bloque
-└─────────────────────────────────────────┘
-```
+**Paso 2 — Outline**
+- No se puede **agregar/eliminar** lecciones ni módulos, ni reordenar, ni editar el `objective`. El admin queda atado a lo que decidió la IA.
+- Si el usuario edita títulos pero la IA luego materializa con `lesson.title` del outline, sí respeta el cambio (ok), pero **no hay forma de regenerar el outline** sin volver atrás y re-extraer.
+- No hay validación: se podría avanzar con un módulo sin lecciones.
 
----
+**Paso 3 — Generar**
+- La barra de progreso está hardcoded a 66 %. Debería reflejar `mi+1 / totalModules`.
+- Los errores por módulo solo se loguean a consola. Si **todos** los módulos fallan, igual se redirige al curso vacío.
+- `materialize_init` inserta el `course` y los `modules` antes de generar lecciones; si el usuario cierra la pestaña a la mitad, queda un curso "draft" huérfano sin forma de retomar.
+- `materialize_module` espera `Promise.all` de TODAS las lecciones del módulo en paralelo: con módulos de 5 lecciones se dispara la concurrencia del AI Gateway y suele tirar 429. Conviene limitar a 2 en paralelo.
+- En `runMaterialize` el `catch` deja `step=2` pero no limpia el `courseId` parcial.
 
-## 📦 PR1 — Core Engine: Spaced Repetition (SM-2 simplificado)
+**Backend (`generate-course`)**
+- `mode === "extract"` y `"outline"` no validan que `sources` no esté vacío → la IA igual responde algo, pero podría devolver brief inventado. Añadir guard.
+- `stepMaterializeQuiz` se llama incluso si la IA falla en producir lecciones; ya está protegido por `inserted > 0`, ok.
+- El cálculo `xp_reward: (outline.modules?.length || 3) * 50` se basa en módulos planeados; si luego se borran módulos vacíos, queda inflado. Recalcular al final.
 
-### 1.1 Base de datos (migración)
+### Cambios a realizar
 
-**Nueva tabla `srs_items`** — una "tarjeta de memoria" por concepto/pregunta clave del usuario:
+**Frontend — `src/pages/admin/CourseStudio.tsx`**
+1. Validar tamaño máximo por archivo (PDF 15 MB, imagen 8 MB, Excel 5 MB) y mostrar toast claro.
+2. Validar URL http/https antes de invocar.
+3. Resetear el `value` del input de archivo tras cargar.
+4. Bloquear "Diseñar outline" si el brief tiene 0 conceptos + 0 hechos + 0 procedimientos; mostrar callout "Material insuficiente: agregá más fuentes o continuá bajo tu responsabilidad".
+5. En el paso Outline: botones para **agregar lección**, **eliminar lección**, **eliminar módulo**, **reordenar** (↑/↓), y **regenerar outline** (vuelve a llamar `mode:"outline"` con `userNotes` actualizadas).
+6. Validar antes de generar: cada módulo debe tener ≥1 lección; si no, deshabilitar "Generar".
+7. Reemplazar la barra hardcoded por una real (`(mi+1)/totalModules * 100`) y mostrar lista de módulos con su estado (✓ generado / ⚠ omitido / ⏳ en curso).
+8. Si **todos** los módulos terminan vacíos: borrar el curso draft vía RPC y mostrar error en lugar de redirigir.
+9. Añadir botón "Cancelar generación" (best-effort: marca un flag y no procesa más módulos; el curso parcial se mantiene en draft).
 
-```sql
-CREATE TABLE srs_items (
-  id uuid PRIMARY KEY,
-  user_id uuid NOT NULL,
-  company_id uuid NOT NULL,
-  course_id uuid,
-  lesson_id uuid,
-  -- Identidad del ítem
-  item_type text NOT NULL,        -- 'concept' | 'quiz_block' | 'term'
-  item_key text NOT NULL,         -- hash del contenido para dedup
-  payload jsonb NOT NULL,         -- pregunta + respuesta + explicación
-  -- Algoritmo SM-2
-  ease_factor real NOT NULL DEFAULT 2.5,
-  interval_days int NOT NULL DEFAULT 0,
-  repetitions int NOT NULL DEFAULT 0,
-  -- Half-Life Regression style
-  strength real NOT NULL DEFAULT 0.3,  -- 0..1 probabilidad de recordar HOY
-  last_reviewed_at timestamptz,
-  next_review_at timestamptz NOT NULL DEFAULT now(),
-  -- Estadística
-  total_reviews int DEFAULT 0,
-  total_correct int DEFAULT 0,
-  UNIQUE(user_id, item_key)
-);
+**Backend — `supabase/functions/generate-course/index.ts`**
+1. Validar `sources.length > 0` en `mode:"extract"`; rechazar con 400 si vacío.
+2. Validar que el brief tenga al menos 1 concepto/hecho/procedimiento en `mode:"outline"`.
+3. En `materialize_module`: limitar concurrencia a **2 lecciones en paralelo** (cola simple) para evitar 429.
+4. Recalcular `xp_reward` y `estimated_duration_minutes` del curso al terminar, basados en módulos/lecciones realmente insertados (nuevo `mode:"materialize_finalize"` o hacerlo dentro del último módulo).
+5. Filtrar bloques inválidos antes de insertar la lección (defensa extra).
 
--- Índice clave para "qué tocar hoy"
-CREATE INDEX idx_srs_due ON srs_items(user_id, next_review_at)
-  WHERE next_review_at <= now();
-```
+**DB — migración**
+- Nada estructural necesario; todo cabe en lo existente. Solo se añade un RPC opcional `delete_draft_course(_course_id uuid)` que el admin (creador) pueda llamar para limpiar drafts huérfanos al cancelar.
 
-**RLS:** sólo el dueño lee/escribe sus tarjetas.
+### Validación post-cambios
+- Probar el flujo end-to-end con: (a) 1 PDF chico, (b) solo 1 nota de texto pegada (caso "material pobre"), (c) URL externa, (d) combinación PDF + Excel.
+- Confirmar logs de la edge function (`generate-course`) sin 429 ni errores.
+- Verificar que ningún módulo creado quede sin lecciones y que el curso final no tenga conteo de XP inflado.
 
-**RPC `srs_review(_item_id, _quality int)`** — actualiza intervalo según calidad de respuesta (0=falló, 3=correcto con duda, 5=fácil) usando SM-2:
-- `quality < 3` → reset `repetitions=0`, `interval=1`
-- `quality >= 3` → intervalos 1, 6, luego × ease_factor
-- Ajustar `ease_factor` y recalcular `strength` y `next_review_at`
-
-**RPC `srs_get_due(_limit int)`** — devuelve tarjetas vencidas ordenadas por urgencia.
-
-### 1.2 Lógica cliente
-
-- **`src/lib/srs.ts`** — implementación SM-2 + helpers para clasificar respuestas en quality 0–5.
-- **`src/hooks/useSRS.ts`** — `enqueueItems(blocks)`, `reviewItem(id, quality)`, `getDueCount()`.
-- **Hook auto-encolar:** cuando una lección se completa, los `interactive_quiz` y `concept` blocks se siembran automáticamente en `srs_items` (dedup por hash).
-
----
-
-## 🔁 PR2 — Retrieval Practice + Daily Practice Hub
-
-### 2.1 Nueva página `/app/practice` ("Práctica diaria")
-
-Reemplaza/complementa la página `Review` actual:
-- **Sesiones cortas de 5–10 ítems** mezclando contenidos vencidos del SRS.
-- UI tipo Duolingo: una pregunta a la vez, barra superior de progreso, animaciones de acierto/error, vidas opcionales.
-- Al final: resumen XP + racha + "siguiente sesión disponible en X horas".
-- Botón fijo en el dashboard: **"Practicar ahora · N pendientes"** con badge rojo si `due > 0`.
-
-### 2.2 Refactor de `Review.tsx`
-- Renombrar a "Errores marcados" (lo manual queda).
-- La práctica adaptativa real vive en `/app/practice`.
-
-### 2.3 Notificaciones de hábito (in-app)
-- Widget en dashboard: "Llevas X días seguidos. ¡No rompas la racha!".
-- Toast diario al primer login si hay tarjetas vencidas.
-
----
-
-## 🎮 PR3 — Adaptive Learning + Microlearning
-
-### 3.1 Perfil dinámico de usuario (`user_skill_profile`)
-
-```sql
-CREATE TABLE user_skill_profile (
-  user_id uuid PRIMARY KEY,
-  company_id uuid NOT NULL,
-  course_id uuid NOT NULL,
-  mastery real DEFAULT 0,       -- 0..1 promedio de strength del curso
-  difficulty_preference text,   -- 'beginner'|'intermediate'|'advanced' (auto-inferido)
-  avg_response_ms int,
-  updated_at timestamptz DEFAULT now(),
-  PRIMARY KEY (user_id, course_id)
-);
-```
-
-- Trigger/función para recalcular `mastery` tras cada review.
-- El `LessonRenderer` consulta el perfil y:
-  - Para usuarios `advanced` → muestra quiz primero, lectura colapsada.
-  - Para `beginner` → muestra lectura completa antes del quiz.
-
-### 3.2 Microlearning enforced
-- Validación en Course Studio: **lecciones ≤ 5 min** (estimar por palabras + bloques).
-- Si la IA genera lecciones largas → split automático en sub-lecciones de 1 concepto cada una.
-- Badge visible "⏱ 3 min" en cada nodo del mapa zigzag.
-
----
-
-## 🧠 PR4 — Learning by Doing: Nuevos tipos de bloques
-
-Añadir al `courseSchema.ts` 3 nuevos `LessonType`:
-
-| Tipo | Pedagogía | UI |
-|------|-----------|-----|
-| `simulation` | Learning by Doing | Flujo de decisiones tipo árbol: "¿Qué haces si...?" → ramas con consecuencias |
-| `scenario_branching` | Casos reales | Escenario empresarial con 3+ caminos y feedback por ruta |
-| `sop_walkthrough` | Procedimientos | Paso a paso con checkmarks obligatorios + foto/video opcional por paso |
-
-Cada uno con su **runner** dedicado en `src/components/lesson/runners/`.
-
-### Nuevos quiz blocks (Duolingo extendido)
-- `tap_to_complete` — completa la frase tocando palabras del banco
-- `image_select` — elige la imagen correcta (para maquinaria/seguridad)
-- `audio_dictation` — escucha y transcribe (TTS via Web Speech API, sin coste)
-
----
-
-## ⚡ PR5 — Feedback Inmediato profesional
-
-Refactor de `InteractiveQuizRunner.tsx`:
-- **Animación de respuesta**: verde + bounce + sonido / rojo + shake + sonido (ya existe `audioEngine`).
-- **Explicación enriquecida** siempre visible tras responder, con:
-  - "✅ Correcto porque…" / "❌ Error común: …"
-  - Mini-tip de memoria ("Recuerda: …")
-  - Botón "Ver concepto en diccionario" → enlaza directo.
-- **Auto-mark mistake**: al fallar dos veces el mismo ítem en SRS, se añade automáticamente a "Errores marcados" (manteniendo la elección del usuario de marcar manualmente conceptos extra).
-
----
-
-## 🤖 PR6 — Generación con IA alineada al motor
-
-### 6.1 Edge function `generate-course` (refactor del prompt)
-
-El prompt al modelo Gemini se reescribe para producir cursos **didácticamente correctos**:
-
-1. **Microlearning**: cada lesson ≤ 300 palabras, 1 concepto.
-2. **Mix obligatorio por módulo**:
-   - 1 lección `concept` (introduce términos)
-   - 1 lección `reading` o `video_embed` (contexto)
-   - 1 lección `interactive_quiz` con ≥ 5 ejercicios variados
-   - 1 lección `simulation` o `case_study` (aplicación)
-   - 1 quiz final (retrieval práctica)
-3. **Variedad de ejercicios**: nunca > 2 del mismo tipo seguidos.
-4. **Explicaciones**: cada `mc/true_false/fill_blank` debe traer `explanation` con tip de memoria.
-5. **Distractores plausibles** (no obvios) para MC.
-
-### 6.2 Nueva edge function `materialize-simulation`
-Genera escenarios ramificados a partir del `source_brief` cuando la outline marque un nodo como `simulation`.
-
-### 6.3 Course Studio — paso "Estrategia pedagógica"
-Nuevo paso entre **Outline** y **Generate**: el admin elige el **mix didáctico** (porcentaje de cada tipo) y la **dificultad inicial**. La IA respeta ese contrato.
-
----
-
-## 🏆 PR7 — Gamificación bien hecha (anti-grinding)
-
-- **XP por aprendizaje real, no por clicks**: completar lección sin quiz = XP base, con quiz aprobado al primer intento = XP × 1.5.
-- **Misiones diarias enfocadas en SRS**: "Repasa 10 tarjetas vencidas" en lugar de sólo "completa lecciones".
-- **Logros pedagógicos nuevos**:
-  - 🧠 *Memoria de elefante* — 50 tarjetas con `strength > 0.9`
-  - 🔥 *Racha de hierro* — 14 días seguidos
-  - 🎯 *Sin errores* — 20 ejercicios correctos seguidos
-- **Ranking semanal** por XP de práctica adaptativa (no sólo por completar).
-
----
-
-## 📋 Orden de entrega sugerido
-
-| PR | Alcance | Riesgo | Impacto |
-|----|---------|--------|---------|
-| **PR1** | DB + SRS engine + auto-seed | Bajo | 🔥 Alto |
-| **PR2** | Página `/app/practice` + dashboard hook | Bajo | 🔥 Alto |
-| **PR3** | Adaptive profile + microlearning enforce | Medio | Medio |
-| **PR4** | Bloques `simulation` + `sop_walkthrough` + nuevos quiz | Medio | 🔥 Alto |
-| **PR5** | Feedback inmediato pro + auto-mistake | Bajo | Medio |
-| **PR6** | Prompt IA pedagógico + materialize-simulation | Medio | 🔥 Alto |
-| **PR7** | Gamificación recalibrada | Bajo | Medio |
-
----
-
-## ❓ Decisiones que necesito confirmar
-
-Tras aprobar el plan global haré 2–3 preguntas clave (algoritmo SRS exacto, si quieres TTS para audio_dictation, y si el ranking semanal debe ser por equipo o individual). Pero el grueso del plan no depende de eso — puedo arrancar por **PR1 + PR2** que son la columna vertebral.
-
-¿Apruebas para empezar a implementar?
+¿Te parece bien con este alcance? Si querés, puedo recortar (p.ej. dejar fuera la edición de outline en este turno y hacerlo después) — avisame y arranco la implementación.
