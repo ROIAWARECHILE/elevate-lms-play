@@ -843,6 +843,7 @@ export type Database = {
             }
             Returns: string
           }
+      delete_draft_course: { Args: { _course_id: string }; Returns: undefined }
       ensure_daily_quests: {
         Args: never
         Returns: {
