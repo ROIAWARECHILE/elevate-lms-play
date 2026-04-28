@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
@@ -10,12 +11,40 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useGoToShortcuts } from "@/hooks/useGoToShortcuts";
+import { supabase } from "@/integrations/supabase/client";
 
 export function AppLayout() {
-  const { user, profile, loading, isPending, signOut } = useAuth();
+  const { user, profile, loading, isPending, signOut, refreshProfile } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
   useGoToShortcuts();
+
+  // Auto-detect approval: poll every 6s + realtime subscription on profile row
+  useEffect(() => {
+    if (!isPending || !user) return;
+
+    const interval = setInterval(() => {
+      refreshProfile();
+    }, 6000);
+
+    const channel = supabase
+      .channel(`profile-status-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${user.id}` },
+        (payload: any) => {
+          if (payload.new?.status && payload.new.status !== "pending") {
+            refreshProfile();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
+  }, [isPending, user?.id, refreshProfile]);
 
   if (loading) {
     return (
