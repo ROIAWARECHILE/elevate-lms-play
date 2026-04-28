@@ -628,20 +628,26 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const supabase = getServiceClient();
 
-      // Run all lesson generations in parallel (bounded by AI gateway concurrency).
-      // Failed lessons are SKIPPED (not inserted as placeholders) so the module
-      // never contains empty lessons. We report skipped titles back to the client.
-      const lessonResults = await Promise.all(
-        (mod.lessons || []).map(async (lesson: any) => {
+      // Generate lessons with bounded concurrency (2 at a time) to avoid AI Gateway 429s.
+      const lessonsArr = (mod.lessons || []) as any[];
+      const lessonResults: Array<{ lesson: any; blocks: any[]; ok: boolean }> = new Array(lessonsArr.length);
+      const CONCURRENCY = 2;
+      let cursor = 0;
+      async function worker() {
+        while (true) {
+          const idx = cursor++;
+          if (idx >= lessonsArr.length) return;
+          const lesson = lessonsArr[idx];
           try {
             const blocks = await stepMaterializeLesson(brief, mod.title, lesson);
-            return { lesson, blocks, ok: true as const };
+            lessonResults[idx] = { lesson, blocks, ok: true };
           } catch (e) {
             console.error("Lesson materialize failed (skipping):", lesson.title, e);
-            return { lesson, blocks: [], ok: false as const };
+            lessonResults[idx] = { lesson, blocks: [], ok: false };
           }
-        }),
-      );
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, lessonsArr.length) }, worker));
 
       // Insert ONLY lessons that produced valid content. Preserves order via sort_order.
       const skipped: string[] = [];
