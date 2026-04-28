@@ -539,7 +539,10 @@ Deno.serve(async (req) => {
 
     // ----- Mode: extract -----
     if (mode === "extract") {
-      const out = await stepExtract(sources || [], userNotes || "");
+      if (!Array.isArray(sources) || sources.length === 0) {
+        throw new Error("Debes proporcionar al menos una fuente para extraer conocimiento.");
+      }
+      const out = await stepExtract(sources, userNotes || "");
       return json({ brief: out });
     }
 
@@ -547,6 +550,12 @@ Deno.serve(async (req) => {
     if (mode === "outline") {
       if (!brief) throw new Error("Missing brief");
       if (!title) throw new Error("Missing title");
+      const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
+      const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
+      const procCount = Array.isArray(brief?.procedures) ? brief.procedures.length : 0;
+      if (conceptCount + factCount + procCount === 0) {
+        throw new Error("El brief no contiene material suficiente (0 conceptos, 0 hechos, 0 procedimientos). Agrega más fuentes.");
+      }
       const out = await stepOutline(brief, title, level, userNotes || "");
       return json({ outline: out });
     }
