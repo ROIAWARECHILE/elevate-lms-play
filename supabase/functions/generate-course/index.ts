@@ -716,6 +716,35 @@ Deno.serve(async (req) => {
       return json({ ok: true, moduleId, inserted, skipped, deleted: inserted === 0 });
     }
 
+    // ----- Mode: materialize_finalize (recompute totals after all modules processed) -----
+    if (mode === "materialize_finalize") {
+      const { courseId } = body;
+      if (!courseId) throw new Error("Missing courseId");
+      const supabase = getServiceClient();
+
+      // Count surviving modules + lessons
+      const { data: modulesRows } = await supabase
+        .from("modules").select("id").eq("course_id", courseId);
+      const moduleIds = (modulesRows || []).map((r: any) => r.id);
+      let lessonsCount = 0;
+      if (moduleIds.length) {
+        const { count } = await supabase
+          .from("lessons").select("id", { count: "exact", head: true })
+          .in("module_id", moduleIds);
+        lessonsCount = count || 0;
+      }
+
+      const xpReward = Math.max(50, moduleIds.length * 50);
+      const estimatedDuration = Math.max(5, lessonsCount * 5 + moduleIds.length * 5);
+
+      await supabase.from("courses").update({
+        xp_reward: xpReward,
+        estimated_duration_minutes: estimatedDuration,
+      }).eq("id", courseId);
+
+      return json({ ok: true, modulesCount: moduleIds.length, lessonsCount });
+    }
+
     // ----- Legacy single-shot materialize (kept for back-compat, NOT recommended). -----
     if (mode === "materialize") {
       throw new Error(
