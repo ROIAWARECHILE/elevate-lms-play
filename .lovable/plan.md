@@ -1,62 +1,142 @@
-## Auditoría de Course Studio
+## Diagnóstico
 
-Revisé el wizard (`src/pages/admin/CourseStudio.tsx`) y la edge function (`supabase/functions/generate-course/index.ts` + `fetch-source`). Los 4 pasos (Fuentes → Brief → Outline → Generar) funcionan en el camino feliz, pero hay varios fallos reales y debilidades de UX que conviene reparar de una pasada.
+El fallo principal no es solo de timeout: el pipeline actual acepta como “generadas” lecciones cuyos bloques no son renderizables. En la base se observan cursos recientes con `content.blocks` como `[{}]`, `[{}, {}]` o bloques tipo `paragraph` dentro de lecciones `interactive_quiz`; por eso la UI muestra “Sin ejercicios”, “Sin caso” o “Esta lección no tiene contenido”.
 
-### Problemas detectados
+Causas probables detectadas:
 
-**Paso 0 — Fuentes**
-- No hay límite de tamaño/tipo: un PDF >20 MB rompe la edge function silenciosamente al codificarlo en base64 dentro del payload.
-- `addFiles` y `addExcel` no resetean el `<input file>`, así que no se puede volver a seleccionar el mismo archivo si se borró.
-- No se valida que la URL sea http/https antes de invocar `fetch-source` (el backend ya lo valida pero el error llega tarde y feo).
-- `addUrl` y `addText` no muestran feedback de éxito.
+1. **Validación demasiado débil antes de insertar**
+   - `blocksAreValid()` acepta algunos casos sin comprobar campos mínimos. Por ejemplo `case_study` acepta un bloque `scenario` aunque esté vacío, e `interactive_quiz` acepta cualquier bloque con `type: "mc"` aunque no tenga pregunta/opciones/correct.
+   - No existe normalización ni filtrado profundo de bloques antes de guardar.
 
-**Paso 1 — Brief**
-- Si el brief queda vacío (sin conceptos/hechos) la UI lo deja pasar y el outline falla más adelante. Falta gate + aviso "material insuficiente, agregá más fuentes".
-- El textarea de "refinar brief" en realidad no re-extrae: solo muta `userNotes` y se usará en el outline. La etiqueta confunde.
+2. **El modelo devuelve estructuras incompatibles con el renderer**
+   - Se han guardado bloques `{}` y bloques de lectura dentro de `interactive_quiz`.
+   - El prompt pide formatos, pero el schema de tool calling solo dice `items: { type: "object" }`; no fuerza propiedades por tipo.
 
-**Paso 2 — Outline**
-- No se puede **agregar/eliminar** lecciones ni módulos, ni reordenar, ni editar el `objective`. El admin queda atado a lo que decidió la IA.
-- Si el usuario edita títulos pero la IA luego materializa con `lesson.title` del outline, sí respeta el cambio (ok), pero **no hay forma de regenerar el outline** sin volver atrás y re-extraer.
-- No hay validación: se podría avanzar con un módulo sin lecciones.
+3. **Se generan “quizzes” en dos capas sin garantía**
+   - Hay lecciones `interactive_quiz` dentro del contenido del curso y además quizzes de módulo en tablas `quizzes/questions`.
+   - Si falla la lección interactiva, el módulo puede quedar con contenido pobre aunque el quiz tabular exista.
 
-**Paso 3 — Generar**
-- La barra de progreso está hardcoded a 66 %. Debería reflejar `mi+1 / totalModules`.
-- Los errores por módulo solo se loguean a consola. Si **todos** los módulos fallan, igual se redirige al curso vacío.
-- `materialize_init` inserta el `course` y los `modules` antes de generar lecciones; si el usuario cierra la pestaña a la mitad, queda un curso "draft" huérfano sin forma de retomar.
-- `materialize_module` espera `Promise.all` de TODAS las lecciones del módulo en paralelo: con módulos de 5 lecciones se dispara la concurrencia del AI Gateway y suele tirar 429. Conviene limitar a 2 en paralelo.
-- En `runMaterialize` el `catch` deja `step=2` pero no limpia el `courseId` parcial.
+4. **Se crean módulos shell antes de saber si tendrán contenido válido**
+   - `materialize_init` inserta curso y módulos vacíos al inicio. Si varias lecciones fallan o el usuario cancela, quedan borradores parciales.
 
-**Backend (`generate-course`)**
-- `mode === "extract"` y `"outline"` no validan que `sources` no esté vacío → la IA igual responde algo, pero podría devolver brief inventado. Añadir guard.
-- `stepMaterializeQuiz` se llama incluso si la IA falla en producir lecciones; ya está protegido por `inserted > 0`, ok.
-- El cálculo `xp_reward: (outline.modules?.length || 3) * 50` se basa en módulos planeados; si luego se borran módulos vacíos, queda inflado. Recalcular al final.
+5. **Course Studio puede navegar a un curso “creado” aunque haya baja calidad**
+   - Cuenta lecciones insertadas, pero no valida si cada módulo tiene mínimo de lecciones renderizables ni si las lecciones interactivas contienen ejercicios reales.
 
-### Cambios a realizar
+6. **Ruta legacy todavía puede crear cursos con lógica antigua**
+   - `src/pages/admin/GenerateCourse.tsx` sigue llamando al modo legacy sin `mode`, que no usa las validaciones nuevas y puede guardar contenido menos estructurado.
 
-**Frontend — `src/pages/admin/CourseStudio.tsx`**
-1. Validar tamaño máximo por archivo (PDF 15 MB, imagen 8 MB, Excel 5 MB) y mostrar toast claro.
-2. Validar URL http/https antes de invocar.
-3. Resetear el `value` del input de archivo tras cargar.
-4. Bloquear "Diseñar outline" si el brief tiene 0 conceptos + 0 hechos + 0 procedimientos; mostrar callout "Material insuficiente: agregá más fuentes o continuá bajo tu responsabilidad".
-5. En el paso Outline: botones para **agregar lección**, **eliminar lección**, **eliminar módulo**, **reordenar** (↑/↓), y **regenerar outline** (vuelve a llamar `mode:"outline"` con `userNotes` actualizadas).
-6. Validar antes de generar: cada módulo debe tener ≥1 lección; si no, deshabilitar "Generar".
-7. Reemplazar la barra hardcoded por una real (`(mi+1)/totalModules * 100`) y mostrar lista de módulos con su estado (✓ generado / ⚠ omitido / ⏳ en curso).
-8. Si **todos** los módulos terminan vacíos: borrar el curso draft vía RPC y mostrar error en lugar de redirigir.
-9. Añadir botón "Cancelar generación" (best-effort: marca un flag y no procesa más módulos; el curso parcial se mantiene en draft).
+## Objetivo de la corrección
 
-**Backend — `supabase/functions/generate-course/index.ts`**
-1. Validar `sources.length > 0` en `mode:"extract"`; rechazar con 400 si vacío.
-2. Validar que el brief tenga al menos 1 concepto/hecho/procedimiento en `mode:"outline"`.
-3. En `materialize_module`: limitar concurrencia a **2 lecciones en paralelo** (cola simple) para evitar 429.
-4. Recalcular `xp_reward` y `estimated_duration_minutes` del curso al terminar, basados en módulos/lecciones realmente insertados (nuevo `mode:"materialize_finalize"` o hacerlo dentro del último módulo).
-5. Filtrar bloques inválidos antes de insertar la lección (defensa extra).
+Cambiar Course Studio de “insertar lo que devuelva la IA” a un pipeline transaccional por calidad:
 
-**DB — migración**
-- Nada estructural necesario; todo cabe en lo existente. Solo se añade un RPC opcional `delete_draft_course(_course_id uuid)` que el admin (creador) pueda llamar para limpiar drafts huérfanos al cancelar.
+```text
+Fuentes -> Brief validado -> Outline validado -> Lección generada
+                                      -> normalizar bloques
+                                      -> validar renderizable
+                                      -> reparar una vez si falla
+                                      -> insertar solo si pasa
+                               -> quiz módulo validado
+                               -> finalizar/publicar como borrador solo si pasa umbral mínimo
+```
 
-### Validación post-cambios
-- Probar el flujo end-to-end con: (a) 1 PDF chico, (b) solo 1 nota de texto pegada (caso "material pobre"), (c) URL externa, (d) combinación PDF + Excel.
-- Confirmar logs de la edge function (`generate-course`) sin 429 ni errores.
-- Verificar que ningún módulo creado quede sin lecciones y que el curso final no tenga conteo de XP inflado.
+## Plan de implementación
 
-¿Te parece bien con este alcance? Si querés, puedo recortar (p.ej. dejar fuera la edición de outline en este turno y hacerlo después) — avisame y arranco la implementación.
+### 1. Endurecer la validación de bloques en `generate-course`
+
+- Crear helpers por tipo:
+  - `normalizeBlock(block)` para remover objetos vacíos y limpiar strings.
+  - `validateReadingBlock`, `validateConceptBlock`, `validateInteractiveQuizBlock`, etc.
+  - `sanitizeBlocksForLessonType(lessonType, blocks)` que devuelva solo bloques compatibles y completos.
+- Reglas mínimas:
+  - `concept`: al menos 2 términos con `term` + `definition`.
+  - `steps`: al menos 3 pasos con `title` + `description`.
+  - `case_study`: al menos 1 `scenario` con texto + 1 `question` o `reflection`.
+  - `interactive_quiz`: al menos 4 ejercicios válidos; `mc` requiere pregunta, 3+ opciones y `correct` incluido en opciones; `true_false` requiere boolean; `match_pairs` requiere 3+ pares; etc.
+  - `comparison`: tabla con headers y filas consistentes.
+  - `reading`: al menos 2 bloques de texto real.
+- Insertar en `lessons` únicamente los bloques saneados, nunca la salida cruda del modelo.
+
+### 2. Añadir reparación automática antes de omitir una lección
+
+- Si la primera generación no pasa validación:
+  - Hacer un segundo intento con un prompt de reparación muy estricto.
+  - Incluir el motivo de fallo: “faltan opciones”, “bloques vacíos”, “tipo incorrecto”, etc.
+- Si sigue fallando:
+  - No insertar la lección.
+  - Devolver `{ inserted: 0, reason, validationErrors }` al frontend.
+
+### 3. Cambiar el schema de tool calling para reducir salidas inválidas
+
+- Separar la generación por tipo con schemas más específicos o un schema discriminado más estricto.
+- Para `interactive_quiz`, exigir campos de cada ejercicio.
+- Para `case_study`, exigir `scenario/question/reflection` con texto.
+- Mantener el backend como fuente de verdad; aunque el modelo incumpla, la validación seguirá bloqueando contenido vacío.
+
+### 4. Replantear el outline para evitar sobreprometer contenido
+
+- Bajar la cantidad de lecciones por módulo cuando el brief sea pobre.
+- No forzar `interactive_quiz` como lección si no hay suficiente material; en su lugar, el módulo tendrá su evaluación tabular si se puede generar.
+- Guardar en cada lección del outline un `sourceEvidence` o `evidence_refs` simple con los conceptos/hechos/procedimientos que la respaldan.
+- Antes de generar, validar que cada lección tenga objetivo y evidencia suficiente.
+
+### 5. Finalización estricta del curso
+
+- `materialize_finalize` debe auditar el curso completo antes de navegar:
+  - contar módulos supervivientes;
+  - contar lecciones renderizables;
+  - contar quizzes con preguntas válidas;
+  - detectar lecciones vacías o incompatibles.
+- Si no alcanza el umbral mínimo:
+  - borrar el draft automáticamente si es irrecuperable; o
+  - dejarlo como draft “requiere revisión” y mostrar reporte, sin publicar ni navegar como éxito.
+- Umbral propuesto:
+  - mínimo 1 módulo;
+  - mínimo 2 lecciones renderizables por módulo o 1 lección + quiz válido;
+  - cero lecciones con `blocks: [{}]` o tipo incompatible.
+
+### 6. Mejorar Course Studio UI para mostrar fallos reales
+
+- En la pantalla de generación, mostrar por módulo:
+  - lecciones generadas;
+  - lecciones omitidas;
+  - razón de omisión;
+  - quiz creado/no creado.
+- Si termina con advertencias, mostrar un resumen accionable en vez de “Curso creado” genérico.
+- Agregar botón “Reintentar omitidas” cuando haya lecciones fallidas.
+
+### 7. Unificar o retirar la ruta legacy `GenerateCourse`
+
+- Redirigir `/app/admin/courses/generate` a Course Studio o actualizarla para usar el pipeline nuevo.
+- Evitar que exista una segunda forma de crear cursos que salte validaciones.
+
+### 8. Reparación de datos ya creados
+
+- Añadir una acción de mantenimiento para cursos draft/publicados dañados:
+  - detectar lecciones sin bloques renderizables;
+  - regenerarlas con la edge function `regenerate-lesson` reforzada;
+  - si no se pueden reparar, marcarlas/omitarlas y avisar.
+- Como mínimo, aplicar reparación al curso reciente de “Política de seguridad...” que contiene múltiples lecciones vacías.
+
+## Archivos a tocar
+
+- `supabase/functions/generate-course/index.ts`
+  - validación fuerte, saneamiento, reparación y finalización estricta.
+- `src/pages/admin/CourseStudio.tsx`
+  - reporte granular de generación y bloqueo de éxito falso.
+- `src/pages/admin/GenerateCourse.tsx`
+  - redirección o migración al pipeline nuevo.
+- `supabase/functions/regenerate-lesson/index.ts`
+  - reutilizar validadores o endurecer validación para reparar cursos dañados.
+- Posible migración SQL opcional
+  - añadir metadatos de calidad si queremos persistir `generation_status`, `validation_report` o `requires_review` en `courses.source_brief`/campo existente sin cambiar schema estructural.
+
+## Validación posterior
+
+- Probar con el caso actual de seguridad industrial y confirmar que:
+  - ninguna lección guarda `blocks: [{}]`;
+  - lecciones `interactive_quiz` renderizan ejercicios reales;
+  - lecciones `case_study` renderizan escenario/preguntas;
+  - módulos sin contenido se eliminan o quedan bloqueados con explicación;
+  - Course Studio no muestra éxito si el curso queda vacío o incompleto.
+- Consultar DB después de generar para verificar conteos de bloques renderizables por tipo.
+- Revisar logs de `generate-course` para confirmar que los errores son explícitos y no silenciosos.
