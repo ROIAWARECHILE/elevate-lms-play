@@ -1,1 +1,4 @@
 project_id = "yyjouvievzvygroghyvo"
+
+[functions.admin-delete-user]
+verify_jwt = true
