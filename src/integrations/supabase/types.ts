@@ -820,7 +820,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_all_pending_users: { Args: never; Returns: number }
       approve_user: { Args: { _target_user_id: string }; Returns: undefined }
+      approve_users_bulk: {
+        Args: { _target_user_ids: string[] }
+        Returns: number
+      }
       create_company_for_user:
         | { Args: { _name: string; _slug: string }; Returns: string }
         | {
@@ -860,6 +865,15 @@ export type Database = {
         }
       }
       ensure_user_profile: { Args: { _full_name?: string }; Returns: undefined }
+      get_pending_users: {
+        Args: never
+        Returns: {
+          email: string
+          full_name: string
+          id: string
+          requested_at: string
+        }[]
+      }
       get_user_company_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
