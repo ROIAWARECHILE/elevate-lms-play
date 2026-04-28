@@ -709,11 +709,56 @@ Deno.serve(async (req) => {
       return json({ ok: true, deleted: false, quizCreated: false });
     }
 
-    // ----- Mode: materialize_module (DEPRECATED — kept as wrapper that errors) -----
+    // ----- Mode: materialize_module (DEPRECATED — back-compat wrapper) -----
+    // Old clients still call this. Internally we now process lessons one-by-one
+    // (sequentially) and then the quiz, mirroring the new flow, so stale browser
+    // bundles keep working without hitting the 150s timeout per request.
     if (mode === "materialize_module") {
-      throw new Error(
-        "'materialize_module' is deprecated due to 150s timeouts. Use 'materialize_lesson' per lesson + 'materialize_module_quiz'.",
-      );
+      const { moduleId, moduleIndex, brief, outline, companyId, userId } = body;
+      if (moduleId == null || moduleIndex == null || !brief || !outline) {
+        return json({ error: "Missing fields for materialize_module" }, 400);
+      }
+      const mod = outline.modules?.[moduleIndex];
+      const lessons = mod?.lessons || [];
+      let inserted = 0;
+      let skipped = 0;
+      // NOTE: sequential to keep each unit small; if a module has too many
+      // lessons this single request can still approach the timeout. The new
+      // client splits by lesson, so this path is only a safety net.
+      for (let li = 0; li < lessons.length; li++) {
+        try {
+          const r = await fetch(req.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: req.headers.get("Authorization") || "",
+              apikey: req.headers.get("apikey") || "",
+            },
+            body: JSON.stringify({
+              mode: "materialize_lesson",
+              companyId, userId, brief, outline,
+              moduleId, moduleIndex, lessonIndex: li, sortOrder: inserted,
+            }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (d?.inserted) inserted += 1; else skipped += 1;
+        } catch (_e) { skipped += 1; }
+      }
+      try {
+        await fetch(req.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: req.headers.get("Authorization") || "",
+            apikey: req.headers.get("apikey") || "",
+          },
+          body: JSON.stringify({
+            mode: "materialize_module_quiz",
+            companyId, userId, brief, outline, moduleId, moduleIndex,
+          }),
+        });
+      } catch (_e) { /* ignore */ }
+      return json({ ok: true, inserted, skipped, deprecated: true });
     }
 
     // ----- Mode: materialize_finalize (recompute totals after all modules processed) -----
