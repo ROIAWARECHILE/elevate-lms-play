@@ -61,6 +61,8 @@ interface CompanyUser {
   job_title: string | null;
   role: string;
   status: string;
+  email?: string | null;
+  requested_at?: string | null;
 }
 
 interface UserDetail {
@@ -74,6 +76,18 @@ interface UserDetail {
 
 type ConfirmAction = { type: "remove" | "reset"; user: CompanyUser } | null;
 
+function formatRelative(iso?: string | null) {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "hace instantes";
+  if (mins < 60) return `hace ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `hace ${days} d`;
+}
+
 export default function AdminUsers() {
   const { profile, user: currentUser } = useAuth();
   const { toast } = useToast();
@@ -82,6 +96,7 @@ export default function AdminUsers() {
   const [loading, setLoading] = useState(true);
   const [togglingRole, setTogglingRole] = useState<string | null>(null);
   const [approvingUser, setApprovingUser] = useState<string | null>(null);
+  const [bulkApproving, setBulkApproving] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [detail, setDetail] = useState<UserDetail | null>(null);
@@ -93,16 +108,39 @@ export default function AdminUsers() {
     fetchData();
   }, [profile?.company_id]);
 
+  // Realtime: refresh list when any profile in this company changes status
+  useEffect(() => {
+    if (!profile?.company_id) return;
+    const channel = supabase
+      .channel(`admin-users-${profile.company_id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles", filter: `company_id=eq.${profile.company_id}` },
+        () => fetchData()
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.company_id]);
+
   const fetchData = async () => {
-    const [profilesRes, companyRes] = await Promise.all([
+    const [profilesRes, companyRes, pendingRes] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id, full_name, xp_total, level, current_streak, longest_streak, last_activity_date, job_title, status")
+        .select("id, full_name, xp_total, level, current_streak, longest_streak, last_activity_date, job_title, status, created_at, updated_at")
         .eq("company_id", profile!.company_id!),
       supabase.from("companies").select("*").eq("id", profile!.company_id!).single(),
+      supabase.rpc("get_pending_users"),
     ]);
 
     if (companyRes.data) setCompany(companyRes.data);
+
+    const pendingMap: Record<string, { email: string | null; requested_at: string | null }> = {};
+    (pendingRes.data || []).forEach((p: any) => {
+      pendingMap[p.id] = { email: p.email ?? null, requested_at: p.requested_at ?? null };
+    });
 
     if (profilesRes.data) {
       const userIds = profilesRes.data.map((p) => p.id);
@@ -122,6 +160,8 @@ export default function AdminUsers() {
           ...p,
           role: rolesMap[p.id] || "collaborator",
           status: p.status || "active",
+          email: pendingMap[p.id]?.email ?? null,
+          requested_at: pendingMap[p.id]?.requested_at ?? p.updated_at ?? p.created_at,
         }))
       );
     }
@@ -144,16 +184,35 @@ export default function AdminUsers() {
   };
 
   const approveUser = async (userId: string) => {
+    // Optimistic update first for instant UX
     setApprovingUser(userId);
+    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: "active" } : u)));
     try {
       const { error } = await supabase.rpc("approve_user", { _target_user_id: userId });
       if (error) throw error;
-      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: "active" } : u)));
       toast({ title: "Usuario aprobado" });
     } catch (e: any) {
+      // rollback
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: "pending" } : u)));
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
       setApprovingUser(null);
+    }
+  };
+
+  const approveAllPending = async () => {
+    setBulkApproving(true);
+    const previousUsers = users;
+    setUsers((prev) => prev.map((u) => (u.status === "pending" ? { ...u, status: "active" } : u)));
+    try {
+      const { data, error } = await supabase.rpc("approve_all_pending_users");
+      if (error) throw error;
+      toast({ title: `${data || 0} usuario(s) aprobado(s)` });
+    } catch (e: any) {
+      setUsers(previousUsers);
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setBulkApproving(false);
     }
   };
 
