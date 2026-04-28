@@ -397,6 +397,7 @@ export default function CourseStudio() {
       let totalInserted = 0;
       let okModules = 0;
       let deletedModules = 0;
+      const failures: { module: string; lesson: string; reason: string }[] = [];
       for (let mi = 0; mi < totalModules; mi++) {
         if (cancelRef.current) break;
         const moduleId = moduleIds[mi];
@@ -430,12 +431,22 @@ export default function CourseStudio() {
             },
           });
           if (lessonRes.error || lessonRes.data?.error) {
-            console.error("Lesson failed:", mi, li, lessonRes.error || lessonRes.data?.error);
+            const reason = lessonRes.data?.error || lessonRes.error?.message || "error desconocido";
+            console.error("Lesson failed:", mi, li, reason);
+            failures.push({ module: mod.title, lesson: lessons[li].title, reason });
             moduleSkipped += 1;
           } else {
             const d = lessonRes.data || {};
-            if (d.inserted) moduleInserted += 1;
-            else moduleSkipped += 1;
+            if (d.inserted) {
+              moduleInserted += 1;
+            } else {
+              moduleSkipped += 1;
+              failures.push({
+                module: mod.title,
+                lesson: lessons[li].title,
+                reason: d.reason || "no se generaron bloques válidos",
+              });
+            }
           }
         }
 
@@ -470,9 +481,10 @@ export default function CourseStudio() {
       // 3) Finalize: recompute xp/duration. If nothing was generated, delete the draft.
       if (okModules === 0) {
         await supabase.rpc("delete_draft_course" as any, { _course_id: courseId });
+        const sample = failures.slice(0, 3).map((f) => `• ${f.lesson}: ${f.reason}`).join("\n");
         toast({
           title: "No se pudo generar el curso",
-          description: "Ningún módulo produjo contenido válido. Agrega más material y reintentá.",
+          description: `Ningún módulo produjo contenido válido. Agrega más material y reintentá.${sample ? `\n\nMotivos:\n${sample}` : ""}`,
           variant: "destructive",
         });
         setStep(2);
@@ -490,10 +502,15 @@ export default function CourseStudio() {
 
       const summary =
         `${totalInserted} lecciones generadas` +
-        (totalSkipped ? ` · ${totalSkipped} omitidas (material insuficiente)` : "") +
-        (deletedModules ? ` · ${deletedModules} módulo(s) eliminado(s) por falta de contenido` : "") +
+        (totalSkipped ? ` · ${totalSkipped} omitidas` : "") +
+        (deletedModules ? ` · ${deletedModules} módulo(s) eliminado(s)` : "") +
         (cancelRef.current ? " · cancelado por el usuario" : "");
-      toast({ title: "¡Curso creado!", description: summary });
+      toast({
+        title: failures.length ? "Curso creado con advertencias" : "¡Curso creado!",
+        description: failures.length
+          ? `${summary}. Revisalo y regenerá las lecciones omitidas desde Editar curso.`
+          : summary,
+      });
       navigate(`/app/admin/courses/${courseId}`);
     } catch (e: any) {
       toast({ title: "Error generando curso", description: e.message, variant: "destructive" });
