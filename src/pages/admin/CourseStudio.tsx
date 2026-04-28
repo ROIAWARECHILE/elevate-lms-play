@@ -1,9 +1,9 @@
 // =====================================================================
 // Course Studio — Wizard profesional multi-fuente para crear cursos.
-// Pasos: Sources → Brief → Outline → Generate.
+// Pasos: Sources → Brief → Outline → Generar.
 // =====================================================================
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import * as XLSX from "xlsx";
@@ -11,6 +11,7 @@ import {
   ArrowLeft, ArrowRight, FileText, Image as ImageIcon, Link2, Type,
   Sheet as SheetIcon, Upload, X, Sparkles, Check, Loader2, BookOpen,
   Lightbulb, Layers, ListOrdered, Columns3, Briefcase, Brain,
+  Plus, Trash2, ArrowUp, ArrowDown, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -36,14 +37,25 @@ interface Source {
 
 const STEPS = ["Fuentes", "Brief", "Outline", "Generar"] as const;
 
+// File size caps (MB → bytes) to keep edge function payloads manageable.
+const SIZE_CAPS: Record<"pdf" | "image" | "excel", number> = {
+  pdf: 15 * 1024 * 1024,
+  image: 8 * 1024 * 1024,
+  excel: 5 * 1024 * 1024,
+};
+
 const TYPE_ICON: Record<string, any> = {
   reading: BookOpen, concept: Lightbulb, flashcards: Layers, steps: ListOrdered,
   comparison: Columns3, case_study: Briefcase, interactive_quiz: Brain,
+  sop_walkthrough: ListOrdered,
 };
 const TYPE_LABEL: Record<string, string> = {
   reading: "Lectura", concept: "Conceptos", flashcards: "Tarjetas", steps: "Pasos",
   comparison: "Comparativa", case_study: "Caso", interactive_quiz: "Quiz",
+  sop_walkthrough: "Procedimiento",
 };
+
+type ModuleStatus = "pending" | "in_progress" | "done" | "skipped" | "deleted";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -100,28 +112,71 @@ export default function CourseStudio() {
   const [brief, setBrief] = useState<any>(null);
   const [outline, setOutline] = useState<any>(null);
 
+  // Generation state
+  const [genProgress, setGenProgress] = useState(0); // 0..100
+  const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
+  const cancelRef = useRef(false);
+
+  // Brief richness gate
+  const briefRichness = useMemo(() => {
+    if (!brief) return 0;
+    const c = brief.key_concepts?.length || 0;
+    const f = brief.facts?.length || 0;
+    const p = brief.procedures?.length || 0;
+    return c + f + p;
+  }, [brief]);
+
+  const outlineValid = useMemo(() => {
+    if (!outline?.modules?.length) return false;
+    return outline.modules.every((m: any) => Array.isArray(m.lessons) && m.lessons.length > 0);
+  }, [outline]);
+
   const canNext = useMemo(() => {
     if (step === 0) return title.trim().length >= 3 && sources.length > 0;
-    if (step === 1) return !!brief;
-    if (step === 2) return !!outline?.modules?.length;
+    if (step === 1) return !!brief && briefRichness > 0;
+    if (step === 2) return outlineValid;
     return false;
-  }, [step, title, sources, brief, outline]);
+  }, [step, title, sources, brief, briefRichness, outlineValid]);
 
   // ----- Source handlers -----
-  const addFiles = async (files: FileList | null, kind: "pdf" | "image") => {
+  const addFiles = async (files: FileList | null, kind: "pdf" | "image", inputEl?: HTMLInputElement) => {
     if (!files) return;
     const next: Source[] = [];
     for (const f of Array.from(files)) {
-      const payload = await fileToBase64(f);
-      next.push({ id: crypto.randomUUID(), kind, name: f.name, payload });
+      if (f.size > SIZE_CAPS[kind]) {
+        toast({
+          title: "Archivo demasiado grande",
+          description: `${f.name} excede el límite de ${Math.round(SIZE_CAPS[kind] / (1024 * 1024))} MB.`,
+          variant: "destructive",
+        });
+        continue;
+      }
+      try {
+        const payload = await fileToBase64(f);
+        next.push({ id: crypto.randomUUID(), kind, name: f.name, payload });
+      } catch {
+        toast({ title: "Error", description: `No se pudo leer ${f.name}`, variant: "destructive" });
+      }
     }
-    setSources((s) => [...s, ...next]);
+    if (next.length) {
+      setSources((s) => [...s, ...next]);
+      toast({ title: "Fuente añadida", description: `${next.length} archivo(s) cargados.` });
+    }
+    if (inputEl) inputEl.value = "";
   };
 
-  const addExcel = async (files: FileList | null) => {
+  const addExcel = async (files: FileList | null, inputEl?: HTMLInputElement) => {
     if (!files) return;
     const next: Source[] = [];
     for (const f of Array.from(files)) {
+      if (f.size > SIZE_CAPS.excel) {
+        toast({
+          title: "Archivo demasiado grande",
+          description: `${f.name} excede el límite de ${Math.round(SIZE_CAPS.excel / (1024 * 1024))} MB.`,
+          variant: "destructive",
+        });
+        continue;
+      }
       try {
         const md = await excelToMarkdown(f);
         next.push({ id: crypto.randomUUID(), kind: "excel", name: f.name, payload: md });
@@ -129,7 +184,11 @@ export default function CourseStudio() {
         toast({ title: "Error", description: `No se pudo leer ${f.name}`, variant: "destructive" });
       }
     }
-    setSources((s) => [...s, ...next]);
+    if (next.length) {
+      setSources((s) => [...s, ...next]);
+      toast({ title: "Fuente añadida", description: `${next.length} hoja(s) cargadas.` });
+    }
+    if (inputEl) inputEl.value = "";
   };
 
   const addText = () => {
@@ -139,11 +198,16 @@ export default function CourseStudio() {
       { id: crypto.randomUUID(), kind: "text", name: `Texto ${s.filter((x) => x.kind === "text").length + 1}`, payload: textInput.trim() },
     ]);
     setTextInput("");
+    toast({ title: "Texto añadido" });
   };
 
   const addUrl = async () => {
     const u = urlInput.trim();
     if (!u) return;
+    if (!/^https?:\/\//i.test(u)) {
+      toast({ title: "URL inválida", description: "La URL debe empezar con http:// o https://", variant: "destructive" });
+      return;
+    }
     setLoading(true);
     setProgressMsg(`Descargando ${u}…`);
     try {
@@ -161,6 +225,7 @@ export default function CourseStudio() {
         },
       ]);
       setUrlInput("");
+      toast({ title: "URL añadida", description: data.title || u });
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
@@ -229,12 +294,84 @@ export default function CourseStudio() {
     }
   };
 
+  // ----- Outline editing helpers -----
+  const updateModule = (mi: number, patch: any) => {
+    setOutline((o: any) => {
+      const next = { ...o, modules: [...o.modules] };
+      next.modules[mi] = { ...next.modules[mi], ...patch };
+      return next;
+    });
+  };
+  const updateLesson = (mi: number, li: number, patch: any) => {
+    setOutline((o: any) => {
+      const next = { ...o, modules: [...o.modules] };
+      const lessons = [...(next.modules[mi].lessons || [])];
+      lessons[li] = { ...lessons[li], ...patch };
+      next.modules[mi] = { ...next.modules[mi], lessons };
+      return next;
+    });
+  };
+  const addLesson = (mi: number) => {
+    setOutline((o: any) => {
+      const next = { ...o, modules: [...o.modules] };
+      const lessons = [...(next.modules[mi].lessons || [])];
+      lessons.push({
+        title: "Nueva lección",
+        lesson_type: "reading",
+        objective: "Definir el objetivo de aprendizaje.",
+      });
+      next.modules[mi] = { ...next.modules[mi], lessons };
+      return next;
+    });
+  };
+  const removeLesson = (mi: number, li: number) => {
+    setOutline((o: any) => {
+      const next = { ...o, modules: [...o.modules] };
+      const lessons = [...(next.modules[mi].lessons || [])];
+      lessons.splice(li, 1);
+      next.modules[mi] = { ...next.modules[mi], lessons };
+      return next;
+    });
+  };
+  const moveLesson = (mi: number, li: number, dir: -1 | 1) => {
+    setOutline((o: any) => {
+      const next = { ...o, modules: [...o.modules] };
+      const lessons = [...(next.modules[mi].lessons || [])];
+      const ni = li + dir;
+      if (ni < 0 || ni >= lessons.length) return o;
+      [lessons[li], lessons[ni]] = [lessons[ni], lessons[li]];
+      next.modules[mi] = { ...next.modules[mi], lessons };
+      return next;
+    });
+  };
+  const removeModule = (mi: number) => {
+    setOutline((o: any) => {
+      const next = { ...o, modules: [...o.modules] };
+      next.modules.splice(mi, 1);
+      return next;
+    });
+  };
+  const moveModule = (mi: number, dir: -1 | 1) => {
+    setOutline((o: any) => {
+      const ni = mi + dir;
+      if (ni < 0 || ni >= o.modules.length) return o;
+      const next = { ...o, modules: [...o.modules] };
+      [next.modules[mi], next.modules[ni]] = [next.modules[ni], next.modules[mi]];
+      return next;
+    });
+  };
+
   const runMaterialize = async () => {
     if (!profile?.company_id || !user?.id || !brief || !outline) return;
+    cancelRef.current = false;
     setLoading(true);
     setStep(3);
     const totalModules = outline.modules?.length || 0;
+    setModuleStatuses(Array(totalModules).fill("pending") as ModuleStatus[]);
+    setGenProgress(0);
     setProgressMsg(`Creando estructura del curso…`);
+
+    let courseId: string | null = null;
     try {
       // 1) Init: create course shell + empty modules
       const initRes = await supabase.functions.invoke("generate-course", {
@@ -251,16 +388,24 @@ export default function CourseStudio() {
       });
       if (initRes.error || initRes.data?.error)
         throw new Error(initRes.data?.error || initRes.error?.message || "Init failed");
-      const { courseId, moduleIds } = initRes.data as { courseId: string; moduleIds: string[] };
+      const init = initRes.data as { courseId: string; moduleIds: string[] };
+      courseId = init.courseId;
+      const moduleIds = init.moduleIds;
 
-      // 2) Materialize each module sequentially (one edge invocation per module)
+      // 2) Materialize each module sequentially
       let totalSkipped = 0;
       let totalInserted = 0;
+      let okModules = 0;
       let deletedModules = 0;
       for (let mi = 0; mi < totalModules; mi++) {
+        if (cancelRef.current) break;
         const moduleId = moduleIds[mi];
-        if (!moduleId) continue;
-        setProgressMsg(`Generando módulo ${mi + 1} de ${totalModules}…`);
+        if (!moduleId) {
+          setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "skipped" : s)));
+          continue;
+        }
+        setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "in_progress" : s)));
+        setProgressMsg(`Generando módulo ${mi + 1} de ${totalModules}: ${outline.modules[mi].title}`);
         const modRes = await supabase.functions.invoke("generate-course", {
           body: {
             mode: "materialize_module",
@@ -274,27 +419,66 @@ export default function CourseStudio() {
         });
         if (modRes.error || modRes.data?.error) {
           console.error("Module failed:", mi, modRes.error || modRes.data?.error);
-          continue;
+          setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "skipped" : s)));
+        } else {
+          const d = modRes.data || {};
+          totalInserted += d.inserted || 0;
+          totalSkipped += (d.skipped?.length || 0);
+          if (d.deleted) {
+            deletedModules += 1;
+            setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "deleted" : s)));
+          } else {
+            okModules += 1;
+            setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "done" : s)));
+          }
         }
-        const d = modRes.data || {};
-        totalInserted += d.inserted || 0;
-        totalSkipped += (d.skipped?.length || 0);
-        if (d.deleted) deletedModules += 1;
+        setGenProgress(Math.round(((mi + 1) / totalModules) * 100));
       }
+
+      // 3) Finalize: recompute xp/duration. If nothing was generated, delete the draft.
+      if (okModules === 0) {
+        await supabase.rpc("delete_draft_course" as any, { _course_id: courseId });
+        toast({
+          title: "No se pudo generar el curso",
+          description: "Ningún módulo produjo contenido válido. Agrega más material y reintentá.",
+          variant: "destructive",
+        });
+        setStep(2);
+        return;
+      }
+
+      await supabase.functions.invoke("generate-course", {
+        body: {
+          mode: "materialize_finalize",
+          companyId: profile.company_id,
+          userId: user.id,
+          courseId,
+        },
+      });
 
       const summary =
         `${totalInserted} lecciones generadas` +
         (totalSkipped ? ` · ${totalSkipped} omitidas (material insuficiente)` : "") +
-        (deletedModules ? ` · ${deletedModules} módulo(s) eliminado(s) por falta de contenido` : "");
+        (deletedModules ? ` · ${deletedModules} módulo(s) eliminado(s) por falta de contenido` : "") +
+        (cancelRef.current ? " · cancelado por el usuario" : "");
       toast({ title: "¡Curso creado!", description: summary });
       navigate(`/app/admin/courses/${courseId}`);
     } catch (e: any) {
       toast({ title: "Error generando curso", description: e.message, variant: "destructive" });
+      // If we created a course shell but everything failed, clean it up.
+      if (courseId) {
+        try { await supabase.rpc("delete_draft_course" as any, { _course_id: courseId }); } catch {}
+      }
       setStep(2);
     } finally {
       setLoading(false);
       setProgressMsg("");
     }
+  };
+
+  const cancelGeneration = () => {
+    cancelRef.current = true;
+    toast({ title: "Cancelando…", description: "Se detendrá tras el módulo actual." });
   };
 
   // ----- Render -----
@@ -376,9 +560,9 @@ export default function CourseStudio() {
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-3">
-                  <SourceUploader icon={FileText} label="PDF" accept="application/pdf" multiple onFiles={(f) => addFiles(f, "pdf")} />
-                  <SourceUploader icon={ImageIcon} label="Imágenes / screenshots" accept="image/*" multiple onFiles={(f) => addFiles(f, "image")} />
-                  <SourceUploader icon={SheetIcon} label="Excel / CSV" accept=".xlsx,.xls,.csv" multiple onFiles={addExcel} />
+                  <SourceUploader icon={FileText} label="PDF (máx 15 MB)" accept="application/pdf" multiple onFiles={(f, el) => addFiles(f, "pdf", el)} />
+                  <SourceUploader icon={ImageIcon} label="Imágenes / screenshots (máx 8 MB c/u)" accept="image/*" multiple onFiles={(f, el) => addFiles(f, "image", el)} />
+                  <SourceUploader icon={SheetIcon} label="Excel / CSV (máx 5 MB)" accept=".xlsx,.xls,.csv" multiple onFiles={(f, el) => addExcel(f, el)} />
                   <div className="border border-dashed border-border rounded-lg p-4 space-y-2">
                     <div className="flex items-center gap-2 text-sm font-medium">
                       <Link2 className="w-4 h-4" /> URL externa
@@ -430,6 +614,22 @@ export default function CourseStudio() {
                   <p className="text-muted-foreground text-sm mt-1">{brief.summary}</p>
                 </div>
 
+                {briefRichness === 0 && (
+                  <div className="border border-destructive/30 bg-destructive/5 rounded-lg p-3 flex gap-2 text-sm">
+                    <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Material insuficiente.</strong> No se detectaron conceptos, hechos ni procedimientos. Volvé al paso anterior y agregá más fuentes para evitar un curso vacío.
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="outline">{brief.key_concepts?.length || 0} conceptos</Badge>
+                  <Badge variant="outline">{brief.facts?.length || 0} hechos</Badge>
+                  <Badge variant="outline">{brief.procedures?.length || 0} procedimientos</Badge>
+                  <Badge variant="outline">{brief.comparisons?.length || 0} comparaciones</Badge>
+                </div>
+
                 {brief.key_concepts?.length > 0 && (
                   <div>
                     <Label className="text-sm">Conceptos clave</Label>
@@ -456,8 +656,9 @@ export default function CourseStudio() {
                 )}
 
                 <div className="space-y-2 pt-4 border-t">
-                  <Label>Refinar brief con instrucciones adicionales (opcional)</Label>
+                  <Label>Notas adicionales para el outline (opcional)</Label>
                   <Textarea value={userNotes} onChange={(e) => setUserNotes(e.target.value)} rows={2} placeholder="Ej: dale más peso al módulo de cumplimiento…" />
+                  <p className="text-xs text-muted-foreground">Estas notas se aplicarán al diseñar la estructura del curso.</p>
                 </div>
               </CardContent>
             </Card>
@@ -467,12 +668,25 @@ export default function CourseStudio() {
           {step === 2 && outline && (
             <Card>
               <CardContent className="p-6 space-y-4">
-                <div>
-                  <p className="text-muted-foreground text-sm">{outline.description}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {outline.modules?.length || 0} módulos · ~{outline.estimated_duration_minutes || 30} min
-                  </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="text-muted-foreground text-sm">{outline.description}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {outline.modules?.length || 0} módulos · ~{outline.estimated_duration_minutes || 30} min
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={runOutline} disabled={loading}>
+                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Regenerar outline
+                  </Button>
                 </div>
+
+                {!outlineValid && (
+                  <div className="border border-destructive/30 bg-destructive/5 rounded-lg p-3 flex gap-2 text-sm">
+                    <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                    <span>Cada módulo debe tener al menos una lección antes de generar el curso.</span>
+                  </div>
+                )}
+
                 <div className="space-y-3">
                   {outline.modules?.map((m: any, mi: number) => (
                     <div key={mi} className="border border-border rounded-lg p-3 space-y-2">
@@ -480,13 +694,18 @@ export default function CourseStudio() {
                         <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">{mi + 1}</span>
                         <Input
                           value={m.title}
-                          onChange={(e) => {
-                            const next = { ...outline };
-                            next.modules[mi].title = e.target.value;
-                            setOutline(next);
-                          }}
-                          className="font-semibold"
+                          onChange={(e) => updateModule(mi, { title: e.target.value })}
+                          className="font-semibold flex-1"
                         />
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveModule(mi, -1)} disabled={mi === 0}>
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveModule(mi, 1)} disabled={mi === outline.modules.length - 1}>
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeModule(mi)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
                       <div className="space-y-1.5 pl-6">
                         {m.lessons?.map((l: any, li: number) => {
@@ -496,20 +715,12 @@ export default function CourseStudio() {
                               <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                               <Input
                                 value={l.title}
-                                onChange={(e) => {
-                                  const next = { ...outline };
-                                  next.modules[mi].lessons[li].title = e.target.value;
-                                  setOutline(next);
-                                }}
-                                className="h-8 text-sm"
+                                onChange={(e) => updateLesson(mi, li, { title: e.target.value })}
+                                className="h-8 text-sm flex-1"
                               />
                               <Select
                                 value={l.lesson_type}
-                                onValueChange={(v) => {
-                                  const next = { ...outline };
-                                  next.modules[mi].lessons[li].lesson_type = v;
-                                  setOutline(next);
-                                }}
+                                onValueChange={(v) => updateLesson(mi, li, { lesson_type: v })}
                               >
                                 <SelectTrigger className="h-8 w-36 text-xs"><SelectValue /></SelectTrigger>
                                 <SelectContent>
@@ -518,9 +729,21 @@ export default function CourseStudio() {
                                   ))}
                                 </SelectContent>
                               </Select>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveLesson(mi, li, -1)} disabled={li === 0}>
+                                <ArrowUp className="w-3 h-3" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveLesson(mi, li, 1)} disabled={li === (m.lessons?.length || 0) - 1}>
+                                <ArrowDown className="w-3 h-3" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeLesson(mi, li)}>
+                                <X className="w-3 h-3" />
+                              </Button>
                             </div>
                           );
                         })}
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => addLesson(mi)}>
+                          <Plus className="w-3 h-3 mr-1" /> Agregar lección
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -532,11 +755,44 @@ export default function CourseStudio() {
           {/* STEP 3: GENERATE */}
           {step === 3 && (
             <Card>
-              <CardContent className="p-12 text-center space-y-4">
-                <Loader2 className="w-12 h-12 animate-spin mx-auto text-primary" />
-                <h3 className="font-semibold text-lg">Materializando el curso…</h3>
-                <p className="text-muted-foreground text-sm max-w-md mx-auto">{progressMsg}</p>
-                <Progress value={66} className="max-w-sm mx-auto" />
+              <CardContent className="p-8 space-y-5">
+                <div className="text-center space-y-3">
+                  <Loader2 className="w-10 h-10 animate-spin mx-auto text-primary" />
+                  <h3 className="font-semibold text-lg">Materializando el curso…</h3>
+                  <p className="text-muted-foreground text-sm max-w-md mx-auto">{progressMsg}</p>
+                  <Progress value={genProgress} className="max-w-md mx-auto" />
+                  <p className="text-xs text-muted-foreground">{genProgress}% completado</p>
+                </div>
+
+                {moduleStatuses.length > 0 && (
+                  <div className="space-y-1.5 max-w-md mx-auto">
+                    {outline?.modules?.map((m: any, mi: number) => {
+                      const st = moduleStatuses[mi];
+                      const icon =
+                        st === "done" ? <Check className="w-3.5 h-3.5 text-primary" /> :
+                        st === "in_progress" ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> :
+                        st === "skipped" ? <X className="w-3.5 h-3.5 text-destructive" /> :
+                        st === "deleted" ? <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground" /> :
+                        <div className="w-3.5 h-3.5 rounded-full border border-border" />;
+                      return (
+                        <div key={mi} className="flex items-center gap-2 text-sm">
+                          {icon}
+                          <span className={st === "deleted" || st === "skipped" ? "text-muted-foreground line-through" : ""}>
+                            {mi + 1}. {m.title}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {loading && (
+                  <div className="flex justify-center">
+                    <Button variant="outline" size="sm" onClick={cancelGeneration} disabled={cancelRef.current}>
+                      Cancelar generación
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -584,7 +840,7 @@ function SourceUploader({
   icon: Icon, label, accept, multiple, onFiles,
 }: {
   icon: any; label: string; accept: string; multiple?: boolean;
-  onFiles: (files: FileList | null) => void;
+  onFiles: (files: FileList | null, inputEl: HTMLInputElement) => void;
 }) {
   return (
     <label className="border border-dashed border-border rounded-lg p-4 cursor-pointer hover:border-primary hover:bg-muted/40 transition-colors flex items-center gap-3">
@@ -595,7 +851,13 @@ function SourceUploader({
           <Upload className="w-3 h-3" /> Click para seleccionar
         </div>
       </div>
-      <input type="file" accept={accept} multiple={multiple} className="hidden" onChange={(e) => onFiles(e.target.files)} />
+      <input
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        className="hidden"
+        onChange={(e) => onFiles(e.target.files, e.currentTarget)}
+      />
     </label>
   );
 }
