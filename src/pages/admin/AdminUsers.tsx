@@ -211,10 +211,13 @@ export default function AdminUsers() {
     setActionLoading(u.id);
     try {
       if (type === "remove") {
-        const { error } = await supabase.rpc("remove_user_from_company", { _target_user_id: u.id });
+        const { data, error } = await supabase.functions.invoke("admin-delete-user", {
+          body: { target_user_id: u.id },
+        });
         if (error) throw error;
+        if (data?.error) throw new Error(data.error);
         setUsers((prev) => prev.filter((x) => x.id !== u.id));
-        toast({ title: "Usuario eliminado", description: `${u.full_name || "Usuario"} ya no pertenece a la empresa` });
+        toast({ title: "Usuario eliminado", description: `${u.full_name || "Usuario"} ha sido borrado por completo` });
       } else {
         const { error } = await supabase.rpc("reset_user_progress", { _target_user_id: u.id });
         if (error) throw error;
