@@ -87,33 +87,212 @@ async function callAi(
   throw lastErr || new Error("AI call failed");
 }
 
-// Validate that generated blocks actually contain content for the given lesson_type.
-function blocksAreValid(lessonType: string, blocks: any[]): boolean {
-  if (!Array.isArray(blocks) || blocks.length === 0) return false;
-  const has = (t: string) => blocks.some((b) => b?.type === t);
-  switch (lessonType) {
-    case "concept":
-      return blocks.some((b) => b?.type === "term" && b.term && b.definition);
-    case "flashcards":
-      return blocks.some((b) => b?.type === "flashcard" && b.front && b.back);
-    case "steps":
-      return blocks.some((b) => b?.type === "step" && b.title);
-    case "comparison":
-      return blocks.some(
-        (b) => b?.type === "comparison_table" && Array.isArray(b.headers) && Array.isArray(b.rows) && b.rows.length > 0,
-      );
-    case "case_study":
-      return has("scenario") || has("question");
-    case "sop_walkthrough":
-      return blocks.some((b) => b?.type === "sop_step" && b.title);
-    case "interactive_quiz":
-      return blocks.some((b) =>
-        ["mc", "true_false", "fill_blank", "match_pairs", "order_steps", "sort_into_buckets", "highlight_terms", "tap_to_complete"].includes(b?.type),
-      );
-    case "reading":
-    default:
-      return blocks.some((b) => (b?.type === "paragraph" || b?.type === "heading") && b.text);
+// =====================================================================
+// Block sanitization + strict validation per lesson_type.
+// Returns ONLY blocks that are renderable by the frontend runners.
+// Empty / malformed / cross-type blocks are silently dropped here so
+// they never reach the database.
+// =====================================================================
+
+const QUIZ_BLOCK_TYPES = [
+  "mc", "true_false", "fill_blank", "match_pairs", "order_steps",
+  "sort_into_buckets", "highlight_terms", "tap_to_complete",
+];
+
+function nonEmptyStr(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+function sanitizeBlock(lessonType: string, raw: any): any | null {
+  if (!raw || typeof raw !== "object" || !nonEmptyStr(raw.type)) return null;
+  const t = raw.type;
+
+  if (lessonType === "reading") {
+    if (t === "heading" && nonEmptyStr(raw.text)) {
+      return { type: "heading", text: raw.text.trim(), level: raw.level === 1 ? 1 : 2 };
+    }
+    if (t === "paragraph" && nonEmptyStr(raw.text)) {
+      return { type: "paragraph", text: raw.text.trim() };
+    }
+    if (t === "callout" && nonEmptyStr(raw.text)) {
+      const variant = ["info", "warning", "success", "tip"].includes(raw.variant) ? raw.variant : "info";
+      const out: any = { type: "callout", variant, text: raw.text.trim() };
+      if (nonEmptyStr(raw.title)) out.title = raw.title.trim();
+      return out;
+    }
+    if (t === "quote" && nonEmptyStr(raw.text)) {
+      const out: any = { type: "quote", text: raw.text.trim() };
+      if (nonEmptyStr(raw.cite)) out.cite = raw.cite.trim();
+      return out;
+    }
+    if (t === "divider") return { type: "divider" };
+    return null;
   }
+
+  if (lessonType === "concept") {
+    if (t !== "term") return null;
+    if (!nonEmptyStr(raw.term) || !nonEmptyStr(raw.definition)) return null;
+    const out: any = { type: "term", term: raw.term.trim(), definition: raw.definition.trim() };
+    if (nonEmptyStr(raw.example)) out.example = raw.example.trim();
+    return out;
+  }
+
+  if (lessonType === "flashcards") {
+    if (t !== "flashcard") return null;
+    if (!nonEmptyStr(raw.front) || !nonEmptyStr(raw.back)) return null;
+    const out: any = { type: "flashcard", front: raw.front.trim(), back: raw.back.trim() };
+    if (nonEmptyStr(raw.hint)) out.hint = raw.hint.trim();
+    return out;
+  }
+
+  if (lessonType === "steps") {
+    if (t !== "step") return null;
+    if (!nonEmptyStr(raw.title) || !nonEmptyStr(raw.description)) return null;
+    const out: any = {
+      type: "step",
+      n: typeof raw.n === "number" ? raw.n : 0,
+      title: raw.title.trim(),
+      description: raw.description.trim(),
+    };
+    if (nonEmptyStr(raw.tip)) out.tip = raw.tip.trim();
+    return out;
+  }
+
+  if (lessonType === "comparison") {
+    if (t !== "comparison_table") return null;
+    const headers = Array.isArray(raw.headers) ? raw.headers.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+    const rows = Array.isArray(raw.rows)
+      ? raw.rows
+          .map((r: any) => ({
+            label: nonEmptyStr(r?.label) ? r.label.trim() : "",
+            cells: Array.isArray(r?.cells) ? r.cells.map((c: any) => (typeof c === "string" ? c.trim() : "")) : [],
+          }))
+          .filter((r: any) => r.label && r.cells.length > 0)
+      : [];
+    if (headers.length < 2 || rows.length < 2) return null;
+    return { type: "comparison_table", headers, rows };
+  }
+
+  if (lessonType === "case_study") {
+    if (t === "scenario" && nonEmptyStr(raw.text)) {
+      const out: any = { type: "scenario", text: raw.text.trim() };
+      if (nonEmptyStr(raw.title)) out.title = raw.title.trim();
+      return out;
+    }
+    if (t === "question" && nonEmptyStr(raw.text)) {
+      return { type: "question", text: raw.text.trim() };
+    }
+    if (t === "reflection" && nonEmptyStr(raw.text)) {
+      return { type: "reflection", text: raw.text.trim() };
+    }
+    return null;
+  }
+
+  if (lessonType === "sop_walkthrough") {
+    if (t !== "sop_step") return null;
+    if (!nonEmptyStr(raw.title) || !nonEmptyStr(raw.description)) return null;
+    const out: any = {
+      type: "sop_step",
+      n: typeof raw.n === "number" ? raw.n : 0,
+      title: raw.title.trim(),
+      description: raw.description.trim(),
+    };
+    if (nonEmptyStr(raw.warning)) out.warning = raw.warning.trim();
+    if (raw.must_check === true) out.must_check = true;
+    return out;
+  }
+
+  if (lessonType === "interactive_quiz") {
+    if (!QUIZ_BLOCK_TYPES.includes(t)) return null;
+    if (t === "mc") {
+      const opts = Array.isArray(raw.options) ? raw.options.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+      if (!nonEmptyStr(raw.question) || opts.length < 3 || !nonEmptyStr(raw.correct) || !opts.includes(raw.correct.trim())) return null;
+      return { type: "mc", question: raw.question.trim(), options: opts, correct: raw.correct.trim(), explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    if (t === "true_false") {
+      if (!nonEmptyStr(raw.question) || typeof raw.correct !== "boolean") return null;
+      return { type: "true_false", question: raw.question.trim(), correct: raw.correct, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    if (t === "fill_blank") {
+      if (!nonEmptyStr(raw.sentence) || !raw.sentence.includes("___")) return null;
+      let correct: string | string[] | null = null;
+      if (Array.isArray(raw.correct) && raw.correct.every(nonEmptyStr)) correct = raw.correct.map((s: string) => s.trim());
+      else if (nonEmptyStr(raw.correct)) correct = raw.correct.trim();
+      if (!correct) return null;
+      return { type: "fill_blank", sentence: raw.sentence.trim(), correct, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    if (t === "match_pairs") {
+      const pairs = Array.isArray(raw.pairs)
+        ? raw.pairs.filter((p: any) => nonEmptyStr(p?.left) && nonEmptyStr(p?.right))
+                   .map((p: any) => ({ left: p.left.trim(), right: p.right.trim() }))
+        : [];
+      if (pairs.length < 3) return null;
+      return { type: "match_pairs", pairs, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    if (t === "order_steps") {
+      const steps = Array.isArray(raw.steps) ? raw.steps.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+      if (steps.length < 3) return null;
+      return { type: "order_steps", steps, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    if (t === "sort_into_buckets") {
+      const buckets = Array.isArray(raw.buckets) ? raw.buckets.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+      const items = Array.isArray(raw.items)
+        ? raw.items.filter((it: any) => nonEmptyStr(it?.text) && nonEmptyStr(it?.bucket) && buckets.includes(it.bucket.trim()))
+                   .map((it: any) => ({ text: it.text.trim(), bucket: it.bucket.trim() }))
+        : [];
+      if (buckets.length < 2 || items.length < 3) return null;
+      return { type: "sort_into_buckets", buckets, items, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    if (t === "highlight_terms") {
+      const terms = Array.isArray(raw.terms) ? raw.terms.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+      if (!nonEmptyStr(raw.sentence) || terms.length === 0) return null;
+      return {
+        type: "highlight_terms",
+        sentence: raw.sentence.trim(),
+        terms,
+        distractors: Array.isArray(raw.distractors) ? raw.distractors.filter(nonEmptyStr).map((s: string) => s.trim()) : [],
+        explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined,
+      };
+    }
+    if (t === "tap_to_complete") {
+      const bank = Array.isArray(raw.bank) ? raw.bank.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+      const correct = Array.isArray(raw.correct) ? raw.correct.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
+      if (!nonEmptyStr(raw.sentence) || !raw.sentence.includes("___") || bank.length < 3 || correct.length === 0) return null;
+      if (!correct.every((c: string) => bank.includes(c))) return null;
+      return { type: "tap_to_complete", sentence: raw.sentence.trim(), bank, correct, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/** Filters and normalizes blocks. Returns only renderable blocks for the type. */
+function sanitizeBlocksForLessonType(lessonType: string, blocks: any[]): any[] {
+  if (!Array.isArray(blocks)) return [];
+  const out: any[] = [];
+  for (const b of blocks) {
+    const clean = sanitizeBlock(lessonType, b);
+    if (clean) out.push(clean);
+  }
+  return out;
+}
+
+/** Minimum count of valid blocks required per lesson type to consider the lesson "good enough". */
+const MIN_BLOCKS_BY_TYPE: Record<string, number> = {
+  reading: 3,
+  concept: 2,
+  flashcards: 3,
+  steps: 3,
+  comparison: 1,
+  case_study: 2,
+  interactive_quiz: 4,
+  sop_walkthrough: 3,
+};
+
+function blocksAreValid(lessonType: string, blocks: any[]): boolean {
+  const min = MIN_BLOCKS_BY_TYPE[lessonType] ?? 1;
+  return Array.isArray(blocks) && blocks.length >= min;
 }
 
 // ---------- Tool schemas ----------
@@ -367,6 +546,7 @@ REGLAS PEDAGÓGICAS:
 
 async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
   const schemaHint = LESSON_BLOCK_HINTS[lesson.lesson_type] || LESSON_BLOCK_HINTS.reading;
+  const minBlocks = MIN_BLOCKS_BY_TYPE[lesson.lesson_type] ?? 1;
   const baseText = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
 
 Curso brief: ${JSON.stringify(brief).slice(0, 12_000)}
@@ -379,30 +559,35 @@ REGLAS DE CALIDAD (OBLIGATORIO):
 - Microlearning: ≤ 5 minutos (≤ 300 palabras + ejercicios cortos).
 - Concreto y aplicable: cero relleno. Usa datos REALES del brief.
 - Para preguntas (mc / true_false / fill_blank): SIEMPRE "explanation" útil que (1) explique por qué la correcta es correcta, (2) mencione el error común, (3) termine con un mini-tip de memoria.
-- En "mc" los distractores deben ser PLAUSIBLES.
+- En "mc" los distractores deben ser PLAUSIBLES. Cada "mc" requiere mínimo 3 opciones y "correct" DEBE ser igual a una de las opciones (idéntico texto).
 - En "sop_walkthrough" cada paso crítico lleva "warning" si hay riesgo y "must_check": true.
-- DEBES devolver al menos 4 bloques que cumplan EXACTAMENTE el formato del tipo "${lesson.lesson_type}".
+- PROHIBIDO devolver objetos vacíos {} o bloques sin los campos requeridos.
+- PROHIBIDO mezclar tipos: si el tipo de lección es "${lesson.lesson_type}", TODOS los bloques deben corresponder EXACTAMENTE a ese tipo.
+- DEBES devolver al menos ${minBlocks} bloques que cumplan EXACTAMENTE el formato del tipo "${lesson.lesson_type}".
 
 FORMATO REQUERIDO de cada bloque (tipo "${lesson.lesson_type}"):
 ${schemaHint}
 
-Devuelve entre 4 y 10 bloques de calidad real (no placeholders).`;
+Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real (no placeholders).`;
 
-  // Try up to 2 times. If the second attempt still produces invalid content,
-  // throw — caller will skip this lesson rather than insert a placeholder.
+  let lastSanitized: any[] = [];
+  let lastReason = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const text = attempt === 0
       ? baseText
-      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: tu salida no contenía bloques válidos del tipo "${lesson.lesson_type}". Esta vez SOLO devuelve bloques con la forma exacta indicada arriba.`;
+      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO (${lastReason}). Esta vez SOLO devuelve bloques con la forma exacta indicada arriba, sin objetos vacíos ni tipos mezclados, y al menos ${minBlocks} bloques válidos.`;
     const result = await callAi(
       [{ role: "user", content: [{ type: "text", text }] }],
       MATERIALIZE_LESSON_TOOL,
-      { temperature: attempt === 0 ? 0.55 : 0.35, maxTokens: 6000 },
+      { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000 },
     );
-    const blocks = Array.isArray(result?.blocks) ? result.blocks : [];
-    if (blocksAreValid(lesson.lesson_type, blocks)) return blocks;
+    const raw = Array.isArray(result?.blocks) ? result.blocks : [];
+    const sanitized = sanitizeBlocksForLessonType(lesson.lesson_type, raw);
+    if (blocksAreValid(lesson.lesson_type, sanitized)) return sanitized;
+    lastSanitized = sanitized;
+    lastReason = `quedaron ${sanitized.length} bloques válidos de ${raw.length} (mínimo ${minBlocks})`;
   }
-  throw new Error(`Lesson "${lesson.title}" produced no valid blocks for type ${lesson.lesson_type}`);
+  throw new Error(`Lesson "${lesson.title}" produced no valid blocks for type ${lesson.lesson_type} (${lastReason})`);
 }
 
 async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any[]) {
