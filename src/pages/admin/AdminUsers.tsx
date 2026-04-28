@@ -160,10 +160,13 @@ export default function AdminUsers() {
   const rejectUser = async (userId: string) => {
     setApprovingUser(userId);
     try {
-      const { error } = await supabase.rpc("reject_user", { _target_user_id: userId });
+      const { data, error } = await supabase.functions.invoke("admin-delete-user", {
+        body: { target_user_id: userId },
+      });
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
       setUsers((prev) => prev.filter((u) => u.id !== userId));
-      toast({ title: "Usuario rechazado" });
+      toast({ title: "Usuario rechazado y eliminado" });
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
