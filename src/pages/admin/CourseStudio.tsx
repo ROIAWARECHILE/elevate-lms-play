@@ -392,7 +392,7 @@ export default function CourseStudio() {
       courseId = init.courseId;
       const moduleIds = init.moduleIds;
 
-      // 2) Materialize each module sequentially
+      // 2) Materialize each module: one lesson per request, then quiz.
       let totalSkipped = 0;
       let totalInserted = 0;
       let okModules = 0;
@@ -405,10 +405,47 @@ export default function CourseStudio() {
           continue;
         }
         setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "in_progress" : s)));
-        setProgressMsg(`Generando módulo ${mi + 1} de ${totalModules}: ${outline.modules[mi].title}`);
-        const modRes = await supabase.functions.invoke("generate-course", {
+        const mod = outline.modules[mi];
+        const lessons = mod.lessons || [];
+        let moduleInserted = 0;
+        let moduleSkipped = 0;
+
+        // 2a) One request per lesson (keeps each call well under 150s).
+        for (let li = 0; li < lessons.length; li++) {
+          if (cancelRef.current) break;
+          setProgressMsg(
+            `Módulo ${mi + 1}/${totalModules} · Lección ${li + 1}/${lessons.length}: ${lessons[li].title}`,
+          );
+          const lessonRes = await supabase.functions.invoke("generate-course", {
+            body: {
+              mode: "materialize_lesson",
+              companyId: profile.company_id,
+              userId: user.id,
+              brief,
+              outline,
+              moduleId,
+              moduleIndex: mi,
+              lessonIndex: li,
+              sortOrder: moduleInserted,
+            },
+          });
+          if (lessonRes.error || lessonRes.data?.error) {
+            console.error("Lesson failed:", mi, li, lessonRes.error || lessonRes.data?.error);
+            moduleSkipped += 1;
+          } else {
+            const d = lessonRes.data || {};
+            if (d.inserted) moduleInserted += 1;
+            else moduleSkipped += 1;
+          }
+        }
+
+        if (cancelRef.current) break;
+
+        // 2b) Quiz for the module (or delete shell if no lessons survived).
+        setProgressMsg(`Módulo ${mi + 1}/${totalModules}: generando evaluación…`);
+        const quizRes = await supabase.functions.invoke("generate-course", {
           body: {
-            mode: "materialize_module",
+            mode: "materialize_module_quiz",
             companyId: profile.company_id,
             userId: user.id,
             brief,
@@ -417,20 +454,15 @@ export default function CourseStudio() {
             moduleIndex: mi,
           },
         });
-        if (modRes.error || modRes.data?.error) {
-          console.error("Module failed:", mi, modRes.error || modRes.data?.error);
-          setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "skipped" : s)));
+        const qd = quizRes.data || {};
+        totalInserted += moduleInserted;
+        totalSkipped += moduleSkipped;
+        if (qd.deleted || moduleInserted === 0) {
+          deletedModules += 1;
+          setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "deleted" : s)));
         } else {
-          const d = modRes.data || {};
-          totalInserted += d.inserted || 0;
-          totalSkipped += (d.skipped?.length || 0);
-          if (d.deleted) {
-            deletedModules += 1;
-            setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "deleted" : s)));
-          } else {
-            okModules += 1;
-            setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "done" : s)));
-          }
+          okModules += 1;
+          setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "done" : s)));
         }
         setGenProgress(Math.round(((mi + 1) / totalModules) * 100));
       }
