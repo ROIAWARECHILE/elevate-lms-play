@@ -1,22 +1,14 @@
 // =====================================================================
 // regenerate-lesson — Regenera UNA lección con IA o convierte su tipo.
-//
-// Body:
-//   {
-//     lessonId: uuid,
-//     companyId: uuid,
-//     mode: 'regenerate' | 'convert',
-//     newType?: LessonType,        // requerido si mode = 'convert'
-//     extraInstructions?: string,
-//   }
-//
-// Reglas:
-// - Verifica que la lección pertenezca a un curso de la company del caller.
-// - Usa el contexto del curso (título, brief, lecciones cercanas) para mejor calidad.
-// - Devuelve { lesson_type, content: { blocks } } y guarda en DB.
+// Usa el validador compartido para garantizar contenido renderizable.
 // =====================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.0";
+import {
+  sanitizeBlocksForLessonType,
+  blocksMeetMinimum,
+  MIN_BLOCKS_BY_TYPE,
+} from "../_shared/course-quality.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,7 +17,8 @@ const corsHeaders = {
 
 const LESSON_TYPES = [
   "reading", "concept", "flashcards", "steps",
-  "comparison", "case_study", "interactive_quiz", "video_embed",
+  "comparison", "case_study", "interactive_quiz",
+  "video_embed", "sop_walkthrough",
 ] as const;
 
 function getAi() {
@@ -52,28 +45,33 @@ const TOOL = {
       properties: {
         lesson_type: { type: "string", enum: [...LESSON_TYPES] },
         title: { type: "string" },
-        blocks: {
-          type: "array",
-          description:
-            "Blocks must match lesson_type: reading→heading/paragraph/callout/quote/code/image/divider; concept→term; flashcards→flashcard; steps→step; comparison→comparison_table; case_study→scenario/question/reflection; interactive_quiz→mc/true_false/fill_blank/match_pairs/order_steps; video_embed→video.",
-          items: { type: "object" },
-        },
+        blocks: { type: "array", items: { type: "object", additionalProperties: true } },
       },
     },
   },
 };
 
-async function callAi(messages: any[]) {
+const HINTS: Record<string, string> = {
+  reading: `heading {text,level} | paragraph {text} | callout {variant,text,title?} | quote {text,cite?} | code {language?,code} | image {url,alt?,caption?} | divider {}`,
+  concept: `term {term, definition, example?}`,
+  flashcards: `flashcard {front, back, hint?}`,
+  steps: `step {n, title, description, tip?}`,
+  comparison: `comparison_table {headers[]≥2, rows:[{label, cells[]}]≥2}`,
+  case_study: `scenario {text, title?} | question {text} | reflection {text}`,
+  interactive_quiz: `mc {question, options[]≥3, correct(igual a una opción), explanation?} | true_false {question, correct: boolean, explanation?} | fill_blank {sentence con ___, correct: string|string[], explanation?} | match_pairs {pairs:[{left,right}]≥3} | order_steps {steps[]≥3} | sort_into_buckets {buckets[], items[]} | highlight_terms {sentence, terms[]} | tap_to_complete {sentence con ___, bank[], correct[] subset bank}`,
+  video_embed: `video {provider:youtube|vimeo|url, url, title?}`,
+  sop_walkthrough: `sop_step {n, title, description, warning?, must_check?: true} (mín 3)`,
+};
+
+async function callAi(messages: any[], opts: { temperature?: number } = {}) {
   const { apiKey, url, model } = getAi();
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model,
-      messages,
-      tools: [TOOL],
+      model, messages, tools: [TOOL],
       tool_choice: { type: "function", function: { name: "build_lesson" } },
-      temperature: 0.6,
+      temperature: opts.temperature ?? 0.55,
       max_tokens: 6000,
     }),
   });
@@ -104,104 +102,95 @@ Deno.serve(async (req) => {
 
     const supabase = getServiceClient();
 
-    // Cargar lección + módulo + curso para validar tenant y obtener contexto.
     const { data: lesson, error: le } = await supabase
       .from("lessons")
       .select("id, title, content, lesson_type, module_id, sort_order")
-      .eq("id", lessonId)
-      .single();
+      .eq("id", lessonId).single();
     if (le || !lesson) throw new Error("Lección no encontrada");
 
     const { data: mod } = await supabase
       .from("modules")
       .select("id, title, description, course_id")
-      .eq("id", lesson.module_id)
-      .single();
+      .eq("id", lesson.module_id).single();
     if (!mod) throw new Error("Módulo no encontrado");
 
     const { data: course } = await supabase
       .from("courses")
       .select("id, title, description, level, company_id, source_brief")
-      .eq("id", mod.course_id)
-      .single();
+      .eq("id", mod.course_id).single();
     if (!course || course.company_id !== companyId) throw new Error("No autorizado");
 
     const targetType = mode === "convert" ? newType : (lesson.lesson_type || "reading");
+    const minBlocks = MIN_BLOCKS_BY_TYPE[targetType] ?? 1;
+    const hint = HINTS[targetType] || HINTS.reading;
 
-    const currentBlocks = Array.isArray((lesson.content as any)?.blocks)
-      ? (lesson.content as any).blocks
-      : [];
+    const currentBlocks = Array.isArray((lesson.content as any)?.blocks) ? (lesson.content as any).blocks : [];
     const currentText = (lesson.content as any)?.text || "";
 
-    const briefSummary =
-      typeof course.source_brief === "object" && course.source_brief
-        ? JSON.stringify(course.source_brief).slice(0, 4000)
-        : "";
+    const briefSummary = typeof course.source_brief === "object" && course.source_brief
+      ? JSON.stringify(course.source_brief).slice(0, 4000) : "";
 
-    const sys = `Eres un diseñador instruccional experto. Generas lecciones tipadas para una plataforma LMS gamificada (estilo Duolingo + Notion). Respondes SIEMPRE en español. Sigues estrictamente el schema de bloques según el lesson_type pedido.
+    const sys = `Eres un diseñador instruccional experto. Generas lecciones tipadas para un LMS gamificado, en español. Sigues estrictamente el schema según lesson_type. PROHIBIDO devolver objetos vacíos {} o bloques fuera del tipo pedido.`;
 
-Tipos y bloques permitidos:
-- reading: heading {text, level}, paragraph {text}, callout {variant, text, title?}, quote {text, cite?}, code {language?, code}, image {url, alt?, caption?}, divider {}
-- concept: term {term, definition, example?}
-- flashcards: flashcard {front, back, hint?}
-- steps: step {n, title, description, tip?}
-- comparison: comparison_table {headers[], rows: [{label, cells[]}]}
-- case_study: scenario {text, title?}, question {text}, reflection {text}
-- interactive_quiz: mc {question, options[], correct, explanation?} | true_false {question, correct, explanation?} | fill_blank {sentence, correct, explanation?} | match_pairs {pairs:[{left,right}]} | order_steps {steps[]}
-- video_embed: video {provider, url, title?}
+    const baseInstr = mode === "convert"
+      ? `Convierte la siguiente lección al tipo "${targetType}". Reorganiza el contenido conservando lo esencial pero adaptándolo a la mecánica del nuevo tipo.`
+      : `Mejora y regenera esta lección manteniendo su tipo "${targetType}". Hazla más clara, atractiva y didáctica.`;
 
-Reglas:
-- Usa entre 3 y 8 bloques.
-- Sin markdown dentro de los textos (solo texto plano).
-- Lenguaje claro, directo, profesional.`;
+    const baseCtx = `Curso: "${course.title}" (nivel ${course.level || "beginner"}).
+Módulo: "${mod.title}". Descripción: ${mod.description || "(sin descripción)"}.
+Lección actual: "${lesson.title}". Tipo actual: ${lesson.lesson_type || "reading"}. Tipo objetivo: ${targetType}.
 
-    const userInstr =
-      mode === "convert"
-        ? `Convierte la siguiente lección al tipo "${targetType}". Reorganiza el contenido conservando la información esencial pero adaptándola a la mecánica del nuevo tipo.`
-        : `Mejora y regenera esta lección manteniendo su tipo "${targetType}". Hazla más clara, atractiva y didáctica.`;
-
-    const ctx = `Curso: "${course.title}" (nivel ${course.level || "beginner"}).
-Módulo: "${mod.title}". Descripción del módulo: ${mod.description || "(sin descripción)"}.
-Lección actual: "${lesson.title}".
-Tipo actual: ${lesson.lesson_type || "reading"}.
-Tipo objetivo: ${targetType}.
-
-Contenido actual (bloques): ${JSON.stringify(currentBlocks).slice(0, 4000)}
+Bloques actuales: ${JSON.stringify(currentBlocks).slice(0, 4000)}
 ${currentText ? `Texto legacy: ${currentText.slice(0, 3000)}` : ""}
-
 ${briefSummary ? `Brief del curso: ${briefSummary}` : ""}
+${extraInstructions ? `Instrucciones del admin: ${extraInstructions}` : ""}
 
-${extraInstructions ? `Instrucciones adicionales del admin: ${extraInstructions}` : ""}
+REGLAS OBLIGATORIAS:
+- Devuelve mínimo ${minBlocks} bloques que cumplan el formato exacto del tipo "${targetType}".
+- Formato permitido: ${hint}
 
-${userInstr}`;
+${baseInstr}`;
 
-    const result = await callAi([
-      { role: "system", content: sys },
-      { role: "user", content: ctx },
-    ]);
-
-    if (!Array.isArray(result.blocks) || result.blocks.length === 0) {
-      throw new Error("La IA no devolvió bloques válidos");
+    let lastReason = "";
+    let valid: any[] = [];
+    let title = lesson.title;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const ctx = attempt === 0
+        ? baseCtx
+        : baseCtx + `\n\n⚠ INTENTO PREVIO INVÁLIDO: ${lastReason}. Devuelve SOLO bloques válidos del tipo "${targetType}".`;
+      const result = await callAi(
+        [{ role: "system", content: sys }, { role: "user", content: ctx }],
+        { temperature: attempt === 0 ? 0.55 : 0.3 },
+      );
+      const raw = Array.isArray(result?.blocks) ? result.blocks : [];
+      const sanitized = sanitizeBlocksForLessonType(targetType, raw);
+      title = (result.title || lesson.title).toString().slice(0, 200);
+      if (blocksMeetMinimum(targetType, sanitized)) { valid = sanitized; break; }
+      lastReason = `${sanitized.length} bloques válidos de ${raw.length} (mínimo ${minBlocks})`;
     }
 
-    const newContent = { blocks: result.blocks };
-    const newTitle = (result.title || lesson.title).toString().slice(0, 200);
+    if (valid.length === 0) {
+      throw new Error(`La IA no devolvió bloques válidos para tipo ${targetType} (${lastReason})`);
+    }
+
+    const newContent = {
+      blocks: valid,
+      validation: {
+        status: "valid",
+        block_count: valid.length,
+        validated_at: new Date().toISOString(),
+        source: "regenerate-lesson",
+      },
+    };
 
     const { error: ue } = await supabase
       .from("lessons")
-      .update({
-        title: newTitle,
-        lesson_type: targetType,
-        content: newContent,
-      } as any)
+      .update({ title, lesson_type: targetType, content: newContent } as any)
       .eq("id", lessonId);
     if (ue) throw new Error(`No se pudo guardar: ${ue.message}`);
 
     return new Response(
-      JSON.stringify({
-        ok: true,
-        lesson: { id: lessonId, title: newTitle, lesson_type: targetType, content: newContent },
-      }),
+      JSON.stringify({ ok: true, lesson: { id: lessonId, title, lesson_type: targetType, content: newContent } }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
