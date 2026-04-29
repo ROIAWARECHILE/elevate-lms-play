@@ -16,7 +16,8 @@ import LessonView from "./pages/LessonView";
 import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import AdminCourses from "./pages/admin/AdminCourses";
-import GenerateCourse from "./pages/admin/GenerateCourse";
+// GenerateCourse legacy reemplazado por Course Studio
+import { Navigate } from "react-router-dom";
 import CourseStudio from "./pages/admin/CourseStudio";
 import EditCourse from "./pages/admin/EditCourse";
 import AdminUsers from "./pages/admin/AdminUsers";
@@ -62,7 +63,7 @@ const App = () => (
               <Route path="admin/courses" element={<AdminCourses />} />
               {/* Crear curso ahora usa Course Studio (IA). Mantenemos /new como alias. */}
               <Route path="admin/courses/new" element={<CourseStudio />} />
-              <Route path="admin/courses/generate" element={<GenerateCourse />} />
+              <Route path="admin/courses/generate" element={<Navigate to="/app/admin/courses/studio" replace />} />
               <Route path="admin/courses/studio" element={<CourseStudio />} />
               <Route path="admin/courses/:courseId" element={<EditCourse />} />
               <Route path="admin/users" element={<AdminUsers />} />

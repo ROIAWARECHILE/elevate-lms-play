@@ -1,142 +1,205 @@
-## Diagnóstico
+## Diagnóstico detallado
 
-El fallo principal no es solo de timeout: el pipeline actual acepta como “generadas” lecciones cuyos bloques no son renderizables. En la base se observan cursos recientes con `content.blocks` como `[{}]`, `[{}, {}]` o bloques tipo `paragraph` dentro de lecciones `interactive_quiz`; por eso la UI muestra “Sin ejercicios”, “Sin caso” o “Esta lección no tiene contenido”.
+Course Studio sigue fallando porque el flujo actual mejoró algunos síntomas, pero la arquitectura todavía permite que contenido incompleto llegue a producción o quede oculto tras mensajes de “curso creado”. Hay tres problemas principales:
 
-Causas probables detectadas:
+1. **La validación vive solo dentro de `generate-course` y no es compartida**
+   - `generate-course` ya tiene sanitización para `materialize_lesson`, pero `regenerate-lesson`, `GenerateCourse` legacy, edición manual y publicación no usan la misma validación.
+   - La base de datos ya tiene cursos con `content.blocks` como `[{}]`, `[{}, {}]` o bloques tipo `paragraph` en lecciones `interactive_quiz`. Eso confirma que hay caminos que guardaron contenido no renderizable.
 
-1. **Validación demasiado débil antes de insertar**
-   - `blocksAreValid()` acepta algunos casos sin comprobar campos mínimos. Por ejemplo `case_study` acepta un bloque `scenario` aunque esté vacío, e `interactive_quiz` acepta cualquier bloque con `type: "mc"` aunque no tenga pregunta/opciones/correct.
-   - No existe normalización ni filtrado profundo de bloques antes de guardar.
+2. **El contrato con la IA sigue siendo demasiado laxo**
+   - El schema de tool calling para lecciones sigue usando `items: { type: "object", additionalProperties: true }`. El prompt pide estructura, pero el contrato técnico no obliga propiedades por tipo.
+   - El outline puede crear lecciones no respaldadas por evidencia suficiente. Además fuerza `interactive_quiz` por módulo aunque el brief sea pobre.
+   - El modelo elegido en el código es `google/gemini-2.5-pro`; la guía actual del proyecto recomienda Lovable AI con `google/gemini-3-flash-preview` por defecto salvo necesidad específica. También conviene dividir extracción, outline y materialización con límites claros.
 
-2. **El modelo devuelve estructuras incompatibles con el renderer**
-   - Se han guardado bloques `{}` y bloques de lectura dentro de `interactive_quiz`.
-   - El prompt pide formatos, pero el schema de tool calling solo dice `items: { type: "object" }`; no fuerza propiedades por tipo.
+3. **La finalización no es una auditoría real de calidad**
+   - `materialize_finalize` solo cuenta módulos y lecciones; no verifica si cada lección renderiza según su `lesson_type` ni si los quizzes tienen preguntas válidas suficientes.
+   - `AdminCourses` permite publicar cualquier borrador, incluso con lecciones rotas.
+   - `CourseView` y `LessonView` consumen lo que exista; si hay bloques inválidos, el alumno ve “Sin ejercicios”, “Sin conceptos” o lecciones vacías.
 
-3. **Se generan “quizzes” en dos capas sin garantía**
-   - Hay lecciones `interactive_quiz` dentro del contenido del curso y además quizzes de módulo en tablas `quizzes/questions`.
-   - Si falla la lección interactiva, el módulo puede quedar con contenido pobre aunque el quiz tabular exista.
+Hallazgo adicional importante: `src/pages/admin/GenerateCourse.tsx` todavía llama `generate-course` sin `mode`, activando el flujo legacy single-shot. Ese camino inserta bloques de lectura sin la validación nueva y puede volver a crear cursos de baja calidad.
 
-4. **Se crean módulos shell antes de saber si tendrán contenido válido**
-   - `materialize_init` inserta curso y módulos vacíos al inicio. Si varias lecciones fallan o el usuario cancela, quedan borradores parciales.
+## Arquitectura propuesta
 
-5. **Course Studio puede navegar a un curso “creado” aunque haya baja calidad**
-   - Cuenta lecciones insertadas, pero no valida si cada módulo tiene mínimo de lecciones renderizables ni si las lecciones interactivas contienen ejercicios reales.
-
-6. **Ruta legacy todavía puede crear cursos con lógica antigua**
-   - `src/pages/admin/GenerateCourse.tsx` sigue llamando al modo legacy sin `mode`, que no usa las validaciones nuevas y puede guardar contenido menos estructurado.
-
-## Objetivo de la corrección
-
-Cambiar Course Studio de “insertar lo que devuelva la IA” a un pipeline transaccional por calidad:
+Cambiar el sistema de “generar e insertar” a “generar, validar, auditar y recién entonces habilitar”.
 
 ```text
-Fuentes -> Brief validado -> Outline validado -> Lección generada
-                                      -> normalizar bloques
-                                      -> validar renderizable
-                                      -> reparar una vez si falla
-                                      -> insertar solo si pasa
-                               -> quiz módulo validado
-                               -> finalizar/publicar como borrador solo si pasa umbral mínimo
+Fuentes
+  -> Extractor: brief normalizado + score de suficiencia
+  -> Planner: outline con evidencia por lección
+  -> Materializer: una lección por llamada
+       -> schema estricto por tipo
+       -> sanitize + validate compartido
+       -> repair 1 vez
+       -> insert solo si pasa
+  -> Quiz generator por módulo
+       -> validar preguntas
+  -> Quality audit final
+       -> si pasa: curso draft listo para revisar/publicar
+       -> si falla: draft requiere revisión o se limpia
 ```
 
 ## Plan de implementación
 
-### 1. Endurecer la validación de bloques en `generate-course`
+### 1. Crear un validador único de contenido de curso
 
-- Crear helpers por tipo:
-  - `normalizeBlock(block)` para remover objetos vacíos y limpiar strings.
-  - `validateReadingBlock`, `validateConceptBlock`, `validateInteractiveQuizBlock`, etc.
-  - `sanitizeBlocksForLessonType(lessonType, blocks)` que devuelva solo bloques compatibles y completos.
-- Reglas mínimas:
-  - `concept`: al menos 2 términos con `term` + `definition`.
-  - `steps`: al menos 3 pasos con `title` + `description`.
-  - `case_study`: al menos 1 `scenario` con texto + 1 `question` o `reflection`.
-  - `interactive_quiz`: al menos 4 ejercicios válidos; `mc` requiere pregunta, 3+ opciones y `correct` incluido en opciones; `true_false` requiere boolean; `match_pairs` requiere 3+ pares; etc.
-  - `comparison`: tabla con headers y filas consistentes.
-  - `reading`: al menos 2 bloques de texto real.
-- Insertar en `lessons` únicamente los bloques saneados, nunca la salida cruda del modelo.
+Añadir un módulo compartible para Edge Functions y frontend, o duplicar de forma controlada en `supabase/functions/_shared/course-quality.ts` y `src/lib/courseQuality.ts` si el entorno no permite importar directamente entre ambos.
 
-### 2. Añadir reparación automática antes de omitir una lección
+Debe exponer:
 
-- Si la primera generación no pasa validación:
-  - Hacer un segundo intento con un prompt de reparación muy estricto.
-  - Incluir el motivo de fallo: “faltan opciones”, “bloques vacíos”, “tipo incorrecto”, etc.
-- Si sigue fallando:
-  - No insertar la lección.
-  - Devolver `{ inserted: 0, reason, validationErrors }` al frontend.
+- `sanitizeBlocksForLessonType(lessonType, blocks)`
+- `validateLessonContent(lessonType, content)`
+- `validateQuizQuestions(questions)`
+- `auditCourseStructure(course, modules, lessons, quizzes, questions)`
+- `getRenderableBlockCount(lesson)`
+- `getQualityStatus(...)`
 
-### 3. Cambiar el schema de tool calling para reducir salidas inválidas
+Reglas mínimas:
 
-- Separar la generación por tipo con schemas más específicos o un schema discriminado más estricto.
-- Para `interactive_quiz`, exigir campos de cada ejercicio.
-- Para `case_study`, exigir `scenario/question/reflection` con texto.
-- Mantener el backend como fuente de verdad; aunque el modelo incumpla, la validación seguirá bloqueando contenido vacío.
+- `reading`: mínimo 2 bloques con texto real, no solo `divider`.
+- `concept`: mínimo 2 `term` con `term` y `definition`.
+- `flashcards`: mínimo 3 tarjetas completas.
+- `steps`: mínimo 3 pasos completos y numerados.
+- `comparison`: 1 tabla con mínimo 2 headers útiles y 2 filas consistentes.
+- `case_study`: 1 escenario + 1 pregunta/reflexión.
+- `interactive_quiz`: mínimo 4 ejercicios válidos; `mc` con 3+ opciones y `correct` exacto; `true_false` boolean; `match_pairs` con 3 pares; `order_steps` con 3 pasos; etc.
+- `sop_walkthrough`: mínimo 3 pasos.
 
-### 4. Replantear el outline para evitar sobreprometer contenido
+Resultado esperado: ningún flujo podrá considerar “válida” una lección con `[{}]` o con bloques incompatibles con su tipo.
 
-- Bajar la cantidad de lecciones por módulo cuando el brief sea pobre.
-- No forzar `interactive_quiz` como lección si no hay suficiente material; en su lugar, el módulo tendrá su evaluación tabular si se puede generar.
-- Guardar en cada lección del outline un `sourceEvidence` o `evidence_refs` simple con los conceptos/hechos/procedimientos que la respaldan.
-- Antes de generar, validar que cada lección tenga objetivo y evidencia suficiente.
+### 2. Endurecer `generate-course` con contratos estrictos por modo
 
-### 5. Finalización estricta del curso
+En `supabase/functions/generate-course/index.ts`:
 
-- `materialize_finalize` debe auditar el curso completo antes de navegar:
-  - contar módulos supervivientes;
-  - contar lecciones renderizables;
-  - contar quizzes con preguntas válidas;
-  - detectar lecciones vacías o incompatibles.
-- Si no alcanza el umbral mínimo:
-  - borrar el draft automáticamente si es irrecuperable; o
-  - dejarlo como draft “requiere revisión” y mostrar reporte, sin publicar ni navegar como éxito.
-- Umbral propuesto:
-  - mínimo 1 módulo;
-  - mínimo 2 lecciones renderizables por módulo o 1 lección + quiz válido;
-  - cero lecciones con `blocks: [{}]` o tipo incompatible.
+- Cambiar el modelo Lovable AI por defecto a `google/gemini-3-flash-preview`, salvo que se decida mantener Pro solo para PDFs complejos.
+- Reemplazar el schema genérico de `MATERIALIZE_LESSON_TOOL` por schemas discriminados o por una herramienta específica según `lesson_type`.
+- Añadir validación de input del body por `mode` para evitar llamadas parciales o payloads inconsistentes.
+- Mejorar `stepExtract` para devolver un `brief_quality_score` y `insufficient_reason` si el material no alcanza.
+- Mejorar `stepOutline` para que cada lección incluya evidencia mínima:
+  - `evidence_refs` o `source_evidence` con conceptos/hechos/procedimientos usados.
+  - No crear `concept`, `steps`, `comparison`, `case_study` o `interactive_quiz` si no hay evidencia suficiente.
+- Ajustar `interactive_quiz`: no forzarlo siempre como lección; puede quedar como quiz tabular del módulo si el brief no soporta ejercicios ricos.
+- En `materialize_lesson`, guardar también metadatos de validación en `content.validation`, por ejemplo `{ status, block_count, repaired, warnings }`.
 
-### 6. Mejorar Course Studio UI para mostrar fallos reales
+### 3. Convertir `materialize_finalize` en auditoría real
 
-- En la pantalla de generación, mostrar por módulo:
-  - lecciones generadas;
-  - lecciones omitidas;
-  - razón de omisión;
-  - quiz creado/no creado.
-- Si termina con advertencias, mostrar un resumen accionable en vez de “Curso creado” genérico.
-- Agregar botón “Reintentar omitidas” cuando haya lecciones fallidas.
+Actualmente solo recalcula XP y duración. Debe:
 
-### 7. Unificar o retirar la ruta legacy `GenerateCourse`
+- Cargar módulos, lecciones, quizzes y preguntas del curso.
+- Ejecutar `auditCourseStructure`.
+- Detectar:
+  - módulos sin lecciones renderizables;
+  - lecciones con bloques vacíos/incompatibles;
+  - quizzes con menos de 3 preguntas válidas;
+  - cursos con menos de 1 módulo útil;
+  - módulos con menos de 2 lecciones útiles y sin quiz válido.
+- Si falla:
+  - devolver `{ ok: false, qualityStatus: "failed", report }`;
+  - no navegar como éxito;
+  - opcionalmente borrar el draft si quedó irrecuperable.
+- Si pasa con advertencias:
+  - devolver `{ ok: true, qualityStatus: "needs_review", report }`;
+  - mantenerlo en draft y mostrar advertencias accionables.
+- Si pasa limpio:
+  - devolver `{ ok: true, qualityStatus: "ready", report }`.
 
-- Redirigir `/app/admin/courses/generate` a Course Studio o actualizarla para usar el pipeline nuevo.
-- Evitar que exista una segunda forma de crear cursos que salte validaciones.
+Importante: no publicar automáticamente. El curso debe quedar en draft listo para revisión.
 
-### 8. Reparación de datos ya creados
+### 4. Bloquear publicación de cursos dañados
 
-- Añadir una acción de mantenimiento para cursos draft/publicados dañados:
-  - detectar lecciones sin bloques renderizables;
-  - regenerarlas con la edge function `regenerate-lesson` reforzada;
-  - si no se pueden reparar, marcarlas/omitarlas y avisar.
-- Como mínimo, aplicar reparación al curso reciente de “Política de seguridad...” que contiene múltiples lecciones vacías.
+En `AdminCourses.tsx` y/o con una función RPC segura:
 
-## Archivos a tocar
+- Antes de pasar de `draft` a `published`, auditar el curso.
+- Si hay lecciones rotas o módulos vacíos, mostrar un error claro y no publicar.
+- Recomendado: crear una RPC `publish_course_if_valid(_course_id uuid)` con `SECURITY DEFINER` que verifique admin + company + calidad. Así la regla no depende solo del cliente.
+
+Si no queremos migración de DB en la primera fase, se puede hacer validación desde frontend antes del update, pero la solución robusta es RPC.
+
+### 5. Eliminar o redirigir el flujo legacy
+
+En `src/App.tsx` y `src/pages/admin/GenerateCourse.tsx`:
+
+- Redirigir `/app/admin/courses/generate` a `/app/admin/courses/studio`, o transformar `GenerateCourse` en wrapper que use el pipeline nuevo.
+- En `generate-course`, desactivar el fallback sin `mode` o hacer que internamente llame al pipeline moderno.
+- Mantener solo compatibilidad segura: si llega una llamada legacy, devolver error accionable o procesarla con validación estricta, nunca con inserts directos sin auditoría.
+
+### 6. Reforzar `regenerate-lesson`
+
+En `supabase/functions/regenerate-lesson/index.ts`:
+
+- Usar el mismo sanitizador/validador que `generate-course`.
+- Añadir reparación automática si la primera generación no pasa.
+- Bloquear guardado si el resultado no es renderizable.
+- Aceptar instrucciones de reparación específicas para lecciones dañadas.
+- Incluir `sop_walkthrough` en tipos soportados, porque Course Studio lo usa pero `regenerate-lesson` aún no lo lista.
+
+### 7. Mejorar la UI de Course Studio durante generación
+
+En `CourseStudio.tsx`:
+
+- Mantener estado por lección, no solo por módulo:
+  - `pending`, `generating`, `valid`, `repairing`, `skipped`, `failed`.
+- Mostrar número de bloques válidos y razón si se omite.
+- Guardar un `generationReport` con errores por módulo/lección.
+- Después de finalizar:
+  - si `qualityStatus = failed`, no navegar a EditCourse como éxito;
+  - si `needs_review`, navegar a edición pero con banner “requiere revisión” y lista de reparaciones;
+  - si `ready`, mostrar éxito normal.
+- Añadir acción “Reintentar lecciones fallidas” que llame `regenerate-lesson` o un nuevo modo `repair_course_lessons`.
+
+### 8. Reparar datos existentes
+
+Crear una acción de mantenimiento para cursos ya dañados, especialmente “Politica de seguridad de Fabrica SMART BUILDING”.
+
+Opciones:
+
+- Edge Function `repair-course`:
+  - audita el curso;
+  - regenera lecciones dañadas con `regenerate-lesson` reforzado;
+  - elimina módulos irrecuperables;
+  - devuelve reporte.
+- O botón en EditCourse: “Auditar y reparar curso”.
+
+También conviene marcar cursos dañados como `draft` hasta que pasen auditoría. Para esto se puede usar `source_brief.generation_quality` sin cambiar schema, o una migración opcional con campos dedicados.
+
+### 9. Pruebas y validación
+
+Añadir tests de Deno para funciones Edge:
+
+- Sanitizador rechaza `[{}]` para todos los tipos.
+- `interactive_quiz` rechaza `paragraph` y acepta 4 ejercicios reales.
+- `case_study` requiere escenario + pregunta/reflexión.
+- `materialize_finalize` falla con curso vacío o lecciones incompatibles.
+- `regenerate-lesson` no guarda salida inválida.
+
+Validación manual posterior:
+
+- Generar de nuevo el curso de seguridad industrial.
+- Consultar DB y confirmar:
+  - cero `content.blocks @> '[{}]'`;
+  - cero `interactive_quiz` con bloques no interactivos;
+  - todos los módulos tienen lecciones renderizables o fueron eliminados;
+  - ningún curso dañado puede publicarse.
+
+## Archivos principales a tocar
 
 - `supabase/functions/generate-course/index.ts`
-  - validación fuerte, saneamiento, reparación y finalización estricta.
-- `src/pages/admin/CourseStudio.tsx`
-  - reporte granular de generación y bloqueo de éxito falso.
-- `src/pages/admin/GenerateCourse.tsx`
-  - redirección o migración al pipeline nuevo.
 - `supabase/functions/regenerate-lesson/index.ts`
-  - reutilizar validadores o endurecer validación para reparar cursos dañados.
-- Posible migración SQL opcional
-  - añadir metadatos de calidad si queremos persistir `generation_status`, `validation_report` o `requires_review` en `courses.source_brief`/campo existente sin cambiar schema estructural.
+- `src/pages/admin/CourseStudio.tsx`
+- `src/pages/admin/GenerateCourse.tsx`
+- `src/App.tsx`
+- `src/pages/admin/AdminCourses.tsx`
+- `src/pages/admin/EditCourse.tsx`
+- `src/lib/courseQuality.ts` nuevo
+- `supabase/functions/_shared/course-quality.ts` nuevo
+- Migración SQL opcional para `publish_course_if_valid` y/o metadatos de calidad
 
-## Validación posterior
+## Prioridad recomendada
 
-- Probar con el caso actual de seguridad industrial y confirmar que:
-  - ninguna lección guarda `blocks: [{}]`;
-  - lecciones `interactive_quiz` renderizan ejercicios reales;
-  - lecciones `case_study` renderizan escenario/preguntas;
-  - módulos sin contenido se eliminan o quedan bloqueados con explicación;
-  - Course Studio no muestra éxito si el curso queda vacío o incompleto.
-- Consultar DB después de generar para verificar conteos de bloques renderizables por tipo.
-- Revisar logs de `generate-course` para confirmar que los errores son explícitos y no silenciosos.
+1. Bloquear nuevas creaciones rotas: validador compartido + legacy desactivado.
+2. Auditoría final real en `materialize_finalize`.
+3. Bloquear publicación de cursos dañados.
+4. Reforzar regeneración/reparación.
+5. Mejorar UI granular.
+6. Reparar cursos existentes.
+
+Con esto Course Studio deja de depender de “que la IA se porte bien” y pasa a tener una capa determinista de calidad: si el contenido no es renderizable, no se guarda, no se publica y se informa exactamente qué falló.
