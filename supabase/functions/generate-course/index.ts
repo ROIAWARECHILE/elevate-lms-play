@@ -1,15 +1,17 @@
 // =====================================================================
-// generate-course v2 — Pipeline multi-fuente: extract → outline → materialize
-//
-// Acepta:
-//   sources: [{ kind: 'pdf'|'image'|'text'|'url'|'excel', name?, payload }]
-//   outline?: estructura ya aprobada por admin (salta extract+outline)
-//
-// Retro-compat: si recibe `pdfBase64`/`imageBase64s`/`instructions` usa
-// el flujo legacy en una sola llamada (igual que v1).
+// generate-course v3 — Pipeline auditable: extract → outline → materialize
+// → finalize con auditoría de calidad. Cada lección se valida con el
+// módulo compartido course-quality y se guarda solo si pasa el mínimo.
 // =====================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.0";
+import {
+  sanitizeBlocksForLessonType,
+  blocksMeetMinimum,
+  filterValidQuizQuestions,
+  auditCourse,
+  MIN_BLOCKS_BY_TYPE,
+} from "../_shared/course-quality.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +29,9 @@ function getAiConfig() {
     url: useLovable
       ? "https://ai.gateway.lovable.dev/v1/chat/completions"
       : "https://api.openai.com/v1/chat/completions",
+    // Pro mantiene mejor calidad para multimodal (PDFs/imágenes); seguimos con él
+    // porque la extracción se basa en visión. Materialización podría usar Flash, pero
+    // mantenemos un solo modelo para simplificar.
     model: useLovable ? "google/gemini-2.5-pro" : "gpt-4o",
   };
 }
@@ -41,7 +46,6 @@ async function callAi(
   let lastErr: Error | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    // Lower temperature on retries to make tool calling more deterministic
     const temp = attempt === 0 ? (opts.temperature ?? 0.6) : Math.max(0.2, (opts.temperature ?? 0.6) - 0.2 * attempt);
     try {
       const res = await fetch(url, {
@@ -58,7 +62,6 @@ async function callAi(
       });
       if (!res.ok) {
         const body = await res.text();
-        // Retry on transient errors
         if (res.status === 429 || res.status >= 500) {
           lastErr = new Error(`AI error (${res.status}): ${body.slice(0, 200)}`);
           await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
@@ -70,11 +73,11 @@ async function callAi(
       const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
       if (!toolCall) {
         lastErr = new Error("AI did not return tool call");
-        continue; // retry
+        continue;
       }
       try {
         return JSON.parse(toolCall.function.arguments);
-      } catch (e) {
+      } catch {
         lastErr = new Error("AI returned invalid JSON in tool call");
         continue;
       }
@@ -85,214 +88,6 @@ async function callAi(
     }
   }
   throw lastErr || new Error("AI call failed");
-}
-
-// =====================================================================
-// Block sanitization + strict validation per lesson_type.
-// Returns ONLY blocks that are renderable by the frontend runners.
-// Empty / malformed / cross-type blocks are silently dropped here so
-// they never reach the database.
-// =====================================================================
-
-const QUIZ_BLOCK_TYPES = [
-  "mc", "true_false", "fill_blank", "match_pairs", "order_steps",
-  "sort_into_buckets", "highlight_terms", "tap_to_complete",
-];
-
-function nonEmptyStr(v: unknown): v is string {
-  return typeof v === "string" && v.trim().length > 0;
-}
-
-function sanitizeBlock(lessonType: string, raw: any): any | null {
-  if (!raw || typeof raw !== "object" || !nonEmptyStr(raw.type)) return null;
-  const t = raw.type;
-
-  if (lessonType === "reading") {
-    if (t === "heading" && nonEmptyStr(raw.text)) {
-      return { type: "heading", text: raw.text.trim(), level: raw.level === 1 ? 1 : 2 };
-    }
-    if (t === "paragraph" && nonEmptyStr(raw.text)) {
-      return { type: "paragraph", text: raw.text.trim() };
-    }
-    if (t === "callout" && nonEmptyStr(raw.text)) {
-      const variant = ["info", "warning", "success", "tip"].includes(raw.variant) ? raw.variant : "info";
-      const out: any = { type: "callout", variant, text: raw.text.trim() };
-      if (nonEmptyStr(raw.title)) out.title = raw.title.trim();
-      return out;
-    }
-    if (t === "quote" && nonEmptyStr(raw.text)) {
-      const out: any = { type: "quote", text: raw.text.trim() };
-      if (nonEmptyStr(raw.cite)) out.cite = raw.cite.trim();
-      return out;
-    }
-    if (t === "divider") return { type: "divider" };
-    return null;
-  }
-
-  if (lessonType === "concept") {
-    if (t !== "term") return null;
-    if (!nonEmptyStr(raw.term) || !nonEmptyStr(raw.definition)) return null;
-    const out: any = { type: "term", term: raw.term.trim(), definition: raw.definition.trim() };
-    if (nonEmptyStr(raw.example)) out.example = raw.example.trim();
-    return out;
-  }
-
-  if (lessonType === "flashcards") {
-    if (t !== "flashcard") return null;
-    if (!nonEmptyStr(raw.front) || !nonEmptyStr(raw.back)) return null;
-    const out: any = { type: "flashcard", front: raw.front.trim(), back: raw.back.trim() };
-    if (nonEmptyStr(raw.hint)) out.hint = raw.hint.trim();
-    return out;
-  }
-
-  if (lessonType === "steps") {
-    if (t !== "step") return null;
-    if (!nonEmptyStr(raw.title) || !nonEmptyStr(raw.description)) return null;
-    const out: any = {
-      type: "step",
-      n: typeof raw.n === "number" ? raw.n : 0,
-      title: raw.title.trim(),
-      description: raw.description.trim(),
-    };
-    if (nonEmptyStr(raw.tip)) out.tip = raw.tip.trim();
-    return out;
-  }
-
-  if (lessonType === "comparison") {
-    if (t !== "comparison_table") return null;
-    const headers = Array.isArray(raw.headers) ? raw.headers.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-    const rows = Array.isArray(raw.rows)
-      ? raw.rows
-          .map((r: any) => ({
-            label: nonEmptyStr(r?.label) ? r.label.trim() : "",
-            cells: Array.isArray(r?.cells) ? r.cells.map((c: any) => (typeof c === "string" ? c.trim() : "")) : [],
-          }))
-          .filter((r: any) => r.label && r.cells.length > 0)
-      : [];
-    if (headers.length < 2 || rows.length < 2) return null;
-    return { type: "comparison_table", headers, rows };
-  }
-
-  if (lessonType === "case_study") {
-    if (t === "scenario" && nonEmptyStr(raw.text)) {
-      const out: any = { type: "scenario", text: raw.text.trim() };
-      if (nonEmptyStr(raw.title)) out.title = raw.title.trim();
-      return out;
-    }
-    if (t === "question" && nonEmptyStr(raw.text)) {
-      return { type: "question", text: raw.text.trim() };
-    }
-    if (t === "reflection" && nonEmptyStr(raw.text)) {
-      return { type: "reflection", text: raw.text.trim() };
-    }
-    return null;
-  }
-
-  if (lessonType === "sop_walkthrough") {
-    if (t !== "sop_step") return null;
-    if (!nonEmptyStr(raw.title) || !nonEmptyStr(raw.description)) return null;
-    const out: any = {
-      type: "sop_step",
-      n: typeof raw.n === "number" ? raw.n : 0,
-      title: raw.title.trim(),
-      description: raw.description.trim(),
-    };
-    if (nonEmptyStr(raw.warning)) out.warning = raw.warning.trim();
-    if (raw.must_check === true) out.must_check = true;
-    return out;
-  }
-
-  if (lessonType === "interactive_quiz") {
-    if (!QUIZ_BLOCK_TYPES.includes(t)) return null;
-    if (t === "mc") {
-      const opts = Array.isArray(raw.options) ? raw.options.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-      if (!nonEmptyStr(raw.question) || opts.length < 3 || !nonEmptyStr(raw.correct) || !opts.includes(raw.correct.trim())) return null;
-      return { type: "mc", question: raw.question.trim(), options: opts, correct: raw.correct.trim(), explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    if (t === "true_false") {
-      if (!nonEmptyStr(raw.question) || typeof raw.correct !== "boolean") return null;
-      return { type: "true_false", question: raw.question.trim(), correct: raw.correct, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    if (t === "fill_blank") {
-      if (!nonEmptyStr(raw.sentence) || !raw.sentence.includes("___")) return null;
-      let correct: string | string[] | null = null;
-      if (Array.isArray(raw.correct) && raw.correct.every(nonEmptyStr)) correct = raw.correct.map((s: string) => s.trim());
-      else if (nonEmptyStr(raw.correct)) correct = raw.correct.trim();
-      if (!correct) return null;
-      return { type: "fill_blank", sentence: raw.sentence.trim(), correct, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    if (t === "match_pairs") {
-      const pairs = Array.isArray(raw.pairs)
-        ? raw.pairs.filter((p: any) => nonEmptyStr(p?.left) && nonEmptyStr(p?.right))
-                   .map((p: any) => ({ left: p.left.trim(), right: p.right.trim() }))
-        : [];
-      if (pairs.length < 3) return null;
-      return { type: "match_pairs", pairs, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    if (t === "order_steps") {
-      const steps = Array.isArray(raw.steps) ? raw.steps.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-      if (steps.length < 3) return null;
-      return { type: "order_steps", steps, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    if (t === "sort_into_buckets") {
-      const buckets = Array.isArray(raw.buckets) ? raw.buckets.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-      const items = Array.isArray(raw.items)
-        ? raw.items.filter((it: any) => nonEmptyStr(it?.text) && nonEmptyStr(it?.bucket) && buckets.includes(it.bucket.trim()))
-                   .map((it: any) => ({ text: it.text.trim(), bucket: it.bucket.trim() }))
-        : [];
-      if (buckets.length < 2 || items.length < 3) return null;
-      return { type: "sort_into_buckets", buckets, items, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    if (t === "highlight_terms") {
-      const terms = Array.isArray(raw.terms) ? raw.terms.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-      if (!nonEmptyStr(raw.sentence) || terms.length === 0) return null;
-      return {
-        type: "highlight_terms",
-        sentence: raw.sentence.trim(),
-        terms,
-        distractors: Array.isArray(raw.distractors) ? raw.distractors.filter(nonEmptyStr).map((s: string) => s.trim()) : [],
-        explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined,
-      };
-    }
-    if (t === "tap_to_complete") {
-      const bank = Array.isArray(raw.bank) ? raw.bank.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-      const correct = Array.isArray(raw.correct) ? raw.correct.filter(nonEmptyStr).map((s: string) => s.trim()) : [];
-      if (!nonEmptyStr(raw.sentence) || !raw.sentence.includes("___") || bank.length < 3 || correct.length === 0) return null;
-      if (!correct.every((c: string) => bank.includes(c))) return null;
-      return { type: "tap_to_complete", sentence: raw.sentence.trim(), bank, correct, explanation: nonEmptyStr(raw.explanation) ? raw.explanation.trim() : undefined };
-    }
-    return null;
-  }
-
-  return null;
-}
-
-/** Filters and normalizes blocks. Returns only renderable blocks for the type. */
-function sanitizeBlocksForLessonType(lessonType: string, blocks: any[]): any[] {
-  if (!Array.isArray(blocks)) return [];
-  const out: any[] = [];
-  for (const b of blocks) {
-    const clean = sanitizeBlock(lessonType, b);
-    if (clean) out.push(clean);
-  }
-  return out;
-}
-
-/** Minimum count of valid blocks required per lesson type to consider the lesson "good enough". */
-const MIN_BLOCKS_BY_TYPE: Record<string, number> = {
-  reading: 3,
-  concept: 2,
-  flashcards: 3,
-  steps: 3,
-  comparison: 1,
-  case_study: 2,
-  interactive_quiz: 4,
-  sop_walkthrough: 3,
-};
-
-function blocksAreValid(lessonType: string, blocks: any[]): boolean {
-  const min = MIN_BLOCKS_BY_TYPE[lessonType] ?? 1;
-  return Array.isArray(blocks) && blocks.length >= min;
 }
 
 // ---------- Tool schemas ----------
@@ -306,8 +101,8 @@ const EXTRACT_TOOL = {
       type: "object",
       required: ["topic", "key_concepts", "facts", "summary"],
       properties: {
-        topic: { type: "string", description: "Main topic identified across sources" },
-        summary: { type: "string", description: "5-10 sentence summary of all material" },
+        topic: { type: "string" },
+        summary: { type: "string" },
         key_concepts: {
           type: "array",
           items: {
@@ -323,7 +118,6 @@ const EXTRACT_TOOL = {
         facts: { type: "array", items: { type: "string" } },
         procedures: {
           type: "array",
-          description: "Step-by-step procedures detected in the sources",
           items: {
             type: "object",
             required: ["title", "steps"],
@@ -353,7 +147,7 @@ const OUTLINE_TOOL = {
   type: "function",
   function: {
     name: "build_course_outline",
-    description: "Design a course outline with typed lessons based on the knowledge brief",
+    description: "Design a course outline with typed lessons. Each lesson MUST cite source evidence.",
     parameters: {
       type: "object",
       required: ["description", "estimated_duration_minutes", "modules"],
@@ -372,10 +166,10 @@ const OUTLINE_TOOL = {
                 type: "array",
                 items: {
                   type: "object",
-                  required: ["title", "lesson_type", "objective"],
+                  required: ["title", "lesson_type", "objective", "evidence"],
                   properties: {
                     title: { type: "string" },
-                    objective: { type: "string", description: "What the learner will know after" },
+                    objective: { type: "string" },
                     lesson_type: {
                       type: "string",
                       enum: [
@@ -383,6 +177,11 @@ const OUTLINE_TOOL = {
                         "comparison", "case_study", "interactive_quiz",
                         "sop_walkthrough",
                       ],
+                    },
+                    evidence: {
+                      type: "array",
+                      description: "Conceptos/hechos/procedimientos del brief que respaldan esta lección. Mínimo 1.",
+                      items: { type: "string" },
                     },
                   },
                 },
@@ -406,7 +205,6 @@ const MATERIALIZE_LESSON_TOOL = {
       properties: {
         blocks: {
           type: "array",
-          description: "Array of typed blocks matching the lesson_type",
           items: { type: "object", additionalProperties: true },
         },
       },
@@ -441,36 +239,22 @@ const MATERIALIZE_QUIZ_TOOL = {
   },
 };
 
-// ---------- Source → AI content parts ----------
+// ---------- Source → AI parts ----------
 
 function buildContentParts(sources: any[], textInstructions: string) {
   const parts: any[] = [{ type: "text", text: textInstructions }];
   for (const s of sources || []) {
     if (s.kind === "pdf" && s.payload) {
-      parts.push({
-        type: "image_url",
-        image_url: { url: `data:application/pdf;base64,${s.payload}`, detail: "high" },
-      });
+      parts.push({ type: "image_url", image_url: { url: `data:application/pdf;base64,${s.payload}`, detail: "high" } });
     } else if (s.kind === "image" && s.payload) {
-      const url = String(s.payload).startsWith("data:")
-        ? s.payload
-        : `data:image/jpeg;base64,${s.payload}`;
+      const url = String(s.payload).startsWith("data:") ? s.payload : `data:image/jpeg;base64,${s.payload}`;
       parts.push({ type: "image_url", image_url: { url, detail: "high" } });
     } else if (s.kind === "text" && s.payload) {
-      parts.push({
-        type: "text",
-        text: `\n\n---\nFuente "${s.name || "texto"}":\n${String(s.payload).slice(0, 30_000)}`,
-      });
+      parts.push({ type: "text", text: `\n\n---\nFuente "${s.name || "texto"}":\n${String(s.payload).slice(0, 30_000)}` });
     } else if (s.kind === "url" && s.payload) {
-      parts.push({
-        type: "text",
-        text: `\n\n---\nFuente URL "${s.name || s.payload}":\n${String(s.text || "").slice(0, 30_000)}`,
-      });
+      parts.push({ type: "text", text: `\n\n---\nFuente URL "${s.name || s.payload}":\n${String(s.text || "").slice(0, 30_000)}` });
     } else if (s.kind === "excel" && s.payload) {
-      parts.push({
-        type: "text",
-        text: `\n\n---\nFuente Excel/CSV "${s.name || "tabla"}" (markdown):\n${String(s.payload).slice(0, 30_000)}`,
-      });
+      parts.push({ type: "text", text: `\n\n---\nFuente Excel/CSV "${s.name || "tabla"}" (markdown):\n${String(s.payload).slice(0, 30_000)}` });
     }
   }
   return parts;
@@ -482,6 +266,7 @@ async function stepExtract(sources: any[], userNotes: string) {
   const text = `Analiza TODAS las fuentes adjuntas y produce un knowledge brief estructurado en español.
 Incluye: tema central, resumen de 5-10 frases, conceptos clave (con definiciones y ejemplo),
 hechos relevantes, procedimientos paso-a-paso si los detectas, comparaciones si aplican.
+Si una sección está ausente del material, devuélvela vacía en vez de inventar.
 Notas del admin: ${userNotes || "(ninguna)"}
 Llama a build_knowledge_brief con los resultados.`;
   return await callAi([{ role: "user", content: buildContentParts(sources, text) }], EXTRACT_TOOL, {
@@ -491,14 +276,12 @@ Llama a build_knowledge_brief con los resultados.`;
 }
 
 async function stepOutline(brief: any, title: string, level: string, userNotes: string) {
-  // Calibrate scope to brief richness — never invent modules without material.
   const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
   const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
   const procCount = Array.isArray(brief?.procedures) ? brief.procedures.length : 0;
   const compCount = Array.isArray(brief?.comparisons) ? brief.comparisons.length : 0;
   const richness = conceptCount + factCount + procCount * 2 + compCount;
 
-  // Adaptive caps: poor brief → small focused course, rich brief → up to 6 modules.
   let maxModules: number;
   let minModules: number;
   if (richness < 6) { minModules = 1; maxModules = 2; }
@@ -514,39 +297,52 @@ ${JSON.stringify(brief).slice(0, 20_000)}
 
 REGLA CRÍTICA — ALCANCE ADAPTATIVO:
 - Material disponible: ${conceptCount} conceptos, ${factCount} hechos, ${procCount} procedimientos, ${compCount} comparaciones (richness=${richness}).
-- Genera ENTRE ${minModules} Y ${maxModules} módulos. NO MÁS. Mejor pocos módulos sólidos que muchos vacíos.
-- Cada módulo DEBE poder respaldarse con al menos 2-3 elementos del brief (conceptos, hechos, procedimientos…). Si no hay material para un módulo, NO lo crees.
-- Cada módulo: 3 a 5 lecciones. NUNCA generes una lección si no hay material concreto en el brief para llenarla.
+- Genera ENTRE ${minModules} Y ${maxModules} módulos. Mejor pocos módulos sólidos que muchos vacíos.
+- Cada lección DEBE incluir el array "evidence" con al menos 1 ítem real del brief que la respalda. Si no hay evidencia, NO crees la lección.
 
 REGLAS PEDAGÓGICAS:
-- **Microlearning**: cada lección ≤ 5 minutos.
-- **Mix lógico por módulo** (adapta según material disponible):
-   1. Si hay conceptos clave → una lección "concept"
-   2. Si hay procedimiento → una lección "steps" o "sop_walkthrough"
-   3. Si hay comparaciones → una lección "comparison"
-   4. SIEMPRE una lección "interactive_quiz" para retrieval (≥ 5 ejercicios)
-   5. Opcional: "case_study" o "flashcards" si el material lo soporta
-- **Asignación de lesson_type según material**:
-   * "concept" → SOLO si key_concepts del brief tiene ≥ 3 términos relevantes para el módulo
-   * "flashcards" → SOLO si hay datos memorizables (pares cortos)
-   * "steps" → SOLO si brief.procedures tiene pasos para el tema
-   * "sop_walkthrough" → SOLO si hay procedimiento crítico con riesgos
-   * "comparison" → SOLO si brief.comparisons tiene tabla aplicable
-   * "case_study" → SOLO si hay hechos suficientes para construir un escenario
-   * "interactive_quiz" → SIEMPRE incluir uno por módulo (retrieval)
-   * "reading" → ÚLTIMO RECURSO. Evítalo a menos que nada de lo anterior aplique
-- "objective" claro (1 frase: qué sabrá el alumno).
+- Microlearning: cada lección ≤ 5 minutos.
+- Mix lógico por módulo (adapta al material disponible):
+   * "concept" SOLO si hay ≥3 key_concepts relevantes para el módulo.
+   * "steps" o "sop_walkthrough" SOLO si brief.procedures aporta pasos.
+   * "comparison" SOLO si brief.comparisons aporta tabla aplicable.
+   * "case_study" SOLO si hay hechos suficientes.
+   * "interactive_quiz" SOLO si hay material para construir ≥4 ejercicios variados; si no, omítelo y deja el quiz tabular del módulo.
+   * "flashcards" SOLO con datos memorizables.
+   * "reading" como ÚLTIMO RECURSO.
+- "objective": una frase clara.
 - Notas del admin: ${userNotes || "(ninguna)"}
-- Español neutro, tono profesional para adultos.`;
+- Español neutro, profesional para adultos.`;
   return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
     temperature: 0.4,
     maxTokens: 8000,
   });
 }
 
+const LESSON_BLOCK_HINTS: Record<string, string> = {
+  reading: `{ "type":"heading","text":"...","level":2 } | { "type":"paragraph","text":"..." } | { "type":"callout","variant":"info|tip|warning|success","text":"..." } | { "type":"quote","text":"...","cite":"..." }`,
+  concept: `{ "type":"term","term":"...","definition":"...","example":"..." }`,
+  flashcards: `{ "type":"flashcard","front":"...","back":"...","hint":"..." }`,
+  steps: `{ "type":"step","n":1,"title":"...","description":"...","tip":"..." }`,
+  comparison: `Un solo bloque: { "type":"comparison_table","headers":["Aspecto","A","B"],"rows":[{"label":"...","cells":["...","..."]}] }`,
+  case_study: `{ "type":"scenario","title":"...","text":"..." } | { "type":"question","text":"..." } | { "type":"reflection","text":"..." }`,
+  sop_walkthrough: `{ "type":"sop_step","n":1,"title":"...","description":"...","warning":"⚠ ...","must_check":true }`,
+  interactive_quiz: `Ejercicios variados (mínimo 4, mezcla 3+ tipos):
+- { "type":"mc","question":"...","options":["a","b","c","d"],"correct":"a","explanation":"..." }
+- { "type":"true_false","question":"...","correct":true,"explanation":"..." }
+- { "type":"fill_blank","sentence":"El ___ es ___.","correct":["v1","v2"],"explanation":"..." }
+- { "type":"match_pairs","pairs":[{"left":"X","right":"Y"}, ...] }
+- { "type":"order_steps","steps":["Paso 1","Paso 2","Paso 3"] }
+- { "type":"sort_into_buckets","buckets":["A","B"],"items":[{"text":"x","bucket":"A"}] }
+- { "type":"highlight_terms","sentence":"...","terms":["..."] }
+- { "type":"tap_to_complete","sentence":"El ___ controla el ___.","bank":["a","b","c","d"],"correct":["a","b"] }`,
+};
+
 async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
   const schemaHint = LESSON_BLOCK_HINTS[lesson.lesson_type] || LESSON_BLOCK_HINTS.reading;
   const minBlocks = MIN_BLOCKS_BY_TYPE[lesson.lesson_type] ?? 1;
+  const evidence = Array.isArray(lesson.evidence) ? lesson.evidence.join("; ") : "";
+
   const baseText = `Genera los bloques de contenido para esta lección, en español, aplicando microlearning + feedback inmediato.
 
 Curso brief: ${JSON.stringify(brief).slice(0, 12_000)}
@@ -554,28 +350,30 @@ Módulo: "${moduleTitle}"
 Lección: "${lesson.title}"
 Tipo: ${lesson.lesson_type}
 Objetivo: ${lesson.objective}
+Evidencia del brief: ${evidence || "(usa el brief completo)"}
 
 REGLAS DE CALIDAD (OBLIGATORIO):
-- Microlearning: ≤ 5 minutos (≤ 300 palabras + ejercicios cortos).
-- Concreto y aplicable: cero relleno. Usa datos REALES del brief.
-- Para preguntas (mc / true_false / fill_blank): SIEMPRE "explanation" útil que (1) explique por qué la correcta es correcta, (2) mencione el error común, (3) termine con un mini-tip de memoria.
-- En "mc" los distractores deben ser PLAUSIBLES. Cada "mc" requiere mínimo 3 opciones y "correct" DEBE ser igual a una de las opciones (idéntico texto).
-- En "sop_walkthrough" cada paso crítico lleva "warning" si hay riesgo y "must_check": true.
-- PROHIBIDO devolver objetos vacíos {} o bloques sin los campos requeridos.
-- PROHIBIDO mezclar tipos: si el tipo de lección es "${lesson.lesson_type}", TODOS los bloques deben corresponder EXACTAMENTE a ese tipo.
-- DEBES devolver al menos ${minBlocks} bloques que cumplan EXACTAMENTE el formato del tipo "${lesson.lesson_type}".
+- Microlearning ≤ 5 minutos.
+- Cero relleno: usa datos REALES del brief o de la evidencia.
+- En "mc" mínimo 3 opciones plausibles y "correct" idéntico a una opción.
+- En "true_false" "correct" debe ser boolean.
+- En "fill_blank" la "sentence" debe contener "___".
+- En "match_pairs" mínimo 3 pares completos.
+- En "order_steps" mínimo 3 pasos no vacíos.
+- En "comparison_table" headers ≥ 2 y rows ≥ 2 con label + cells.
+- PROHIBIDO objetos vacíos {} o tipos mezclados (todos los bloques deben ser del tipo "${lesson.lesson_type}").
+- DEVUELVE al menos ${minBlocks} bloques que cumplan EXACTAMENTE el formato.
 
 FORMATO REQUERIDO de cada bloque (tipo "${lesson.lesson_type}"):
 ${schemaHint}
 
-Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real (no placeholders).`;
+Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real.`;
 
-  let lastSanitized: any[] = [];
   let lastReason = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const text = attempt === 0
       ? baseText
-      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO (${lastReason}). Esta vez SOLO devuelve bloques con la forma exacta indicada arriba, sin objetos vacíos ni tipos mezclados, y al menos ${minBlocks} bloques válidos.`;
+      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: ${lastReason}. Esta vez SOLO bloques con la forma exacta indicada y al menos ${minBlocks} válidos.`;
     const result = await callAi(
       [{ role: "user", content: [{ type: "text", text }] }],
       MATERIALIZE_LESSON_TOOL,
@@ -583,117 +381,27 @@ Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real (no placeh
     );
     const raw = Array.isArray(result?.blocks) ? result.blocks : [];
     const sanitized = sanitizeBlocksForLessonType(lesson.lesson_type, raw);
-    if (blocksAreValid(lesson.lesson_type, sanitized)) return sanitized;
-    lastSanitized = sanitized;
-    lastReason = `quedaron ${sanitized.length} bloques válidos de ${raw.length} (mínimo ${minBlocks})`;
+    if (blocksMeetMinimum(lesson.lesson_type, sanitized)) {
+      return { blocks: sanitized, repaired: attempt > 0, raw_count: raw.length };
+    }
+    lastReason = `${sanitized.length} bloques válidos de ${raw.length} (mínimo ${minBlocks})`;
   }
-  throw new Error(`Lesson "${lesson.title}" produced no valid blocks for type ${lesson.lesson_type} (${lastReason})`);
+  throw new Error(`Lesson "${lesson.title}" no produjo bloques válidos para tipo ${lesson.lesson_type} (${lastReason})`);
 }
 
 async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any[]) {
-  const text = `Genera 4-6 preguntas de quiz para el módulo "${moduleTitle}" del curso.
+  const text = `Genera 4-6 preguntas de quiz para el módulo "${moduleTitle}".
 Brief: ${JSON.stringify(brief).slice(0, 8_000)}
 Lecciones del módulo: ${lessons.map((l) => `"${l.title}"`).join(", ")}
-- Mezcla multiple_choice (4 opciones) y true_false (2 opciones).
-- correct_answer debe coincidir EXACTO con una opción.
-- Todo en español.`;
+- Mezcla multiple_choice (4 opciones) y true_false.
+- correct_answer EXACTO a una opción.
+- Español.`;
   const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_QUIZ_TOOL, {
     temperature: 0.5,
     maxTokens: 4000,
   });
   return Array.isArray(result?.questions) ? result.questions : [];
 }
-
-const LESSON_BLOCK_HINTS: Record<string, string> = {
-  reading: `{ "type": "heading", "text": "...", "level": 2 } | { "type": "paragraph", "text": "..." } | { "type": "callout", "variant": "info|tip|warning|success", "text": "..." } | { "type": "quote", "text": "...", "cite": "..." }`,
-  concept: `{ "type": "term", "term": "...", "definition": "...", "example": "..." }`,
-  flashcards: `{ "type": "flashcard", "front": "...", "back": "...", "hint": "..." }`,
-  steps: `{ "type": "step", "n": 1, "title": "...", "description": "...", "tip": "..." }`,
-  comparison: `Un solo bloque: { "type": "comparison_table", "headers": ["Aspecto","Opción A","Opción B"], "rows": [{"label":"...","cells":["...","..."]}] }`,
-  case_study: `{ "type": "scenario", "title": "...", "text": "..." } | { "type": "question", "text": "..." } | { "type": "reflection", "text": "..." }`,
-  sop_walkthrough: `Genera 3-7 bloques sop_step en orden:
-{ "type": "sop_step", "n": 1, "title": "...", "description": "Instrucción operativa concreta", "warning": "⚠ Riesgo si aplica (opcional)", "must_check": true }
-- "must_check": true SIEMPRE para pasos críticos.
-- "warning" obligatorio si hay riesgo de seguridad, daño o error costoso.`,
-  interactive_quiz: `Genera 5-7 ejercicios variados estilo Duolingo para adultos. USA AL MENOS 3 TIPOS DISTINTOS y NO repitas el mismo tipo más de 2 veces seguidas. Cada ejercicio DEBE incluir "explanation" con el porqué + tip de memoria.
-- { "type": "mc", "question": "...", "options": ["a","b","c","d"], "correct": "a", "explanation": "..." }
-- { "type": "true_false", "question": "...", "correct": true, "explanation": "..." }
-- { "type": "fill_blank", "sentence": "El ___ es ___.", "correct": ["valor1","valor2"], "explanation": "..." }
-- { "type": "match_pairs", "pairs": [{"left":"Concepto","right":"Definición"}, ...], "explanation": "..." }  // 3-5 pares
-- { "type": "order_steps", "steps": ["Paso 1","Paso 2","Paso 3","Paso 4"], "explanation": "..." }
-- { "type": "sort_into_buckets", "buckets": ["Categoría A","Categoría B"], "items": [{"text":"item","bucket":"Categoría A"}, ...], "explanation": "..." }
-- { "type": "highlight_terms", "sentence": "Texto donde hay que marcar las palabras clave.", "terms": ["palabras","clave"], "distractors": ["otras"], "explanation": "..." }
-- { "type": "tap_to_complete", "sentence": "El ___ controla el ___.", "bank": ["motor","sensor","panel","botón"], "correct": ["motor","sensor"], "explanation": "..." }`,
-};
-
-// ---------- Legacy single-shot (back-compat) ----------
-
-const LEGACY_TOOL = {
-  type: "function",
-  function: {
-    name: "generate_course_structure",
-    description: "Generates a complete course structure",
-    parameters: {
-      type: "object",
-      required: ["description", "estimated_duration_minutes", "modules"],
-      properties: {
-        description: { type: "string" },
-        estimated_duration_minutes: { type: "number" },
-        modules: {
-          type: "array",
-          items: {
-            type: "object",
-            required: ["title", "description", "lessons", "quiz"],
-            properties: {
-              title: { type: "string" },
-              description: { type: "string" },
-              lessons: {
-                type: "array",
-                items: {
-                  type: "object",
-                  required: ["title", "content_blocks"],
-                  properties: {
-                    title: { type: "string" },
-                    content_blocks: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        required: ["type", "text"],
-                        properties: {
-                          type: { type: "string", enum: ["heading", "paragraph"] },
-                          text: { type: "string" },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              quiz: {
-                type: "object",
-                required: ["questions"],
-                properties: {
-                  questions: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      required: ["question_text", "question_type", "options", "correct_answer"],
-                      properties: {
-                        question_text: { type: "string" },
-                        question_type: { type: "string", enum: ["multiple_choice", "true_false"] },
-                        options: { type: "array", items: { type: "string" } },
-                        correct_answer: { type: "string" },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-};
 
 // ---------- Main handler ----------
 
@@ -703,54 +411,34 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const {
-      // Common
-      title,
-      level = "beginner",
-      companyId,
-      userId,
-      // New API
-      mode, // 'extract' | 'outline' | 'materialize' | undefined (full)
-      sources,
-      userNotes,
-      brief, // for outline+materialize
-      outline, // for materialize
-      // Legacy
-      pdfBase64,
-      imageBase64s,
-      instructions,
+      title, level = "beginner", companyId, userId,
+      mode, sources, userNotes, brief, outline,
     } = body;
 
     if (!companyId || !userId) throw new Error("Missing companyId/userId");
 
-    // ----- Mode: extract -----
     if (mode === "extract") {
-      if (!Array.isArray(sources) || sources.length === 0) {
-        throw new Error("Debes proporcionar al menos una fuente para extraer conocimiento.");
-      }
+      if (!Array.isArray(sources) || sources.length === 0) throw new Error("Debes proporcionar al menos una fuente.");
       const out = await stepExtract(sources, userNotes || "");
       return json({ brief: out });
     }
 
-    // ----- Mode: outline -----
     if (mode === "outline") {
       if (!brief) throw new Error("Missing brief");
       if (!title) throw new Error("Missing title");
-      const conceptCount = Array.isArray(brief?.key_concepts) ? brief.key_concepts.length : 0;
-      const factCount = Array.isArray(brief?.facts) ? brief.facts.length : 0;
-      const procCount = Array.isArray(brief?.procedures) ? brief.procedures.length : 0;
+      const conceptCount = brief?.key_concepts?.length || 0;
+      const factCount = brief?.facts?.length || 0;
+      const procCount = brief?.procedures?.length || 0;
       if (conceptCount + factCount + procCount === 0) {
-        throw new Error("El brief no contiene material suficiente (0 conceptos, 0 hechos, 0 procedimientos). Agrega más fuentes.");
+        throw new Error("El brief no contiene material suficiente. Agrega más fuentes.");
       }
       const out = await stepOutline(brief, title, level, userNotes || "");
       return json({ outline: out });
     }
 
-    // ----- Mode: materialize_init (creates course shell + empty modules) -----
-    // Splits the heavy work so each invocation stays under the edge CPU limit.
     if (mode === "materialize_init") {
       if (!brief || !outline || !title) throw new Error("Missing brief/outline/title");
       const supabase = getServiceClient();
-
       const { data: course, error: courseError } = await supabase
         .from("courses")
         .insert({
@@ -794,18 +482,13 @@ Deno.serve(async (req) => {
           })
           .select("id")
           .single();
-        if (moduleError) {
-          console.error("Module insert:", moduleError);
-          moduleIds.push("");
-          continue;
-        }
+        if (moduleError) { console.error("Module insert:", moduleError); moduleIds.push(""); continue; }
         moduleIds.push(moduleData.id);
       }
 
       return json({ courseId, moduleIds, modulesCount: moduleIds.length });
     }
 
-    // ----- Mode: materialize_lesson (ONE lesson per request to stay under 150s) -----
     if (mode === "materialize_lesson") {
       const { moduleId, moduleIndex, lessonIndex, sortOrder } = body;
       if (!brief || !outline || !moduleId) throw new Error("Missing brief/outline/moduleId");
@@ -816,20 +499,25 @@ Deno.serve(async (req) => {
       const supabase = getServiceClient();
 
       try {
-        const blocks = await stepMaterializeLesson(brief, mod.title, lesson);
-        if (!blocks || blocks.length === 0) {
-          return json({ ok: true, inserted: 0, skipped: lesson.title });
-        }
+        const { blocks, repaired } = await stepMaterializeLesson(brief, mod.title, lesson);
         await supabase.from("lessons").insert({
           module_id: moduleId,
           title: lesson.title,
           lesson_type: lesson.lesson_type || "reading",
-          content: { blocks },
+          content: {
+            blocks,
+            validation: {
+              status: "valid",
+              repaired,
+              block_count: blocks.length,
+              validated_at: new Date().toISOString(),
+            },
+          },
           content_type: "text",
           sort_order: typeof sortOrder === "number" ? sortOrder : lessonIndex,
           xp_reward: 10,
         });
-        return json({ ok: true, inserted: 1 });
+        return json({ ok: true, inserted: 1, blocks: blocks.length, repaired });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         console.error("Lesson materialize failed (skipping):", lesson.title, message);
@@ -837,7 +525,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ----- Mode: materialize_module_quiz (build quiz for one module) -----
     if (mode === "materialize_module_quiz") {
       const { moduleId, moduleIndex } = body;
       if (!brief || !outline || !moduleId) throw new Error("Missing brief/outline/moduleId");
@@ -845,36 +532,21 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const supabase = getServiceClient();
 
-      // Check if the module ended up with any lessons. If not, delete the shell.
       const { count: lessonCount } = await supabase
-        .from("lessons").select("id", { count: "exact", head: true })
-        .eq("module_id", moduleId);
-
+        .from("lessons").select("id", { count: "exact", head: true }).eq("module_id", moduleId);
       if (!lessonCount) {
         await supabase.from("modules").delete().eq("id", moduleId);
-        console.warn(`Module "${mod.title}" deleted: no valid lessons generated.`);
         return json({ ok: true, deleted: true, quizCreated: false });
       }
 
       try {
         const questions = await stepMaterializeQuiz(brief, mod.title, mod.lessons || []);
-        const validQs = (questions || []).filter((q: any) =>
-          q?.question_text &&
-          Array.isArray(q.options) && q.options.length >= 2 &&
-          q.correct_answer && q.options.includes(q.correct_answer),
-        );
-        if (validQs.length) {
+        const validQs = filterValidQuizQuestions(questions);
+        if (validQs.length >= 3) {
           const { data: quizData, error: quizError } = await supabase
             .from("quizzes")
-            .insert({
-              module_id: moduleId,
-              title: `Quiz: ${mod.title}`,
-              passing_score: 70,
-              max_attempts: 3,
-              xp_reward: 25,
-            })
-            .select("id")
-            .single();
+            .insert({ module_id: moduleId, title: `Quiz: ${mod.title}`, passing_score: 70, max_attempts: 3, xp_reward: 25 })
+            .select("id").single();
           if (!quizError && quizData) {
             const qRows = validQs.map((q: any, qi: number) => ({
               quiz_id: quizData.id,
@@ -894,22 +566,15 @@ Deno.serve(async (req) => {
       return json({ ok: true, deleted: false, quizCreated: false });
     }
 
-    // ----- Mode: materialize_module (DEPRECATED — back-compat wrapper) -----
-    // Old clients still call this. Internally we now process lessons one-by-one
-    // (sequentially) and then the quiz, mirroring the new flow, so stale browser
-    // bundles keep working without hitting the 150s timeout per request.
+    // Wrapper deprecated para clientes viejos
     if (mode === "materialize_module") {
-      const { moduleId, moduleIndex, brief, outline, companyId, userId } = body;
+      const { moduleId, moduleIndex } = body;
       if (moduleId == null || moduleIndex == null || !brief || !outline) {
         return json({ error: "Missing fields for materialize_module" }, 400);
       }
       const mod = outline.modules?.[moduleIndex];
       const lessons = mod?.lessons || [];
-      let inserted = 0;
-      let skipped = 0;
-      // NOTE: sequential to keep each unit small; if a module has too many
-      // lessons this single request can still approach the timeout. The new
-      // client splits by lesson, so this path is only a safety net.
+      let inserted = 0; let skipped = 0;
       for (let li = 0; li < lessons.length; li++) {
         try {
           const r = await fetch(req.url, {
@@ -927,7 +592,7 @@ Deno.serve(async (req) => {
           });
           const d = await r.json().catch(() => ({}));
           if (d?.inserted) inserted += 1; else skipped += 1;
-        } catch (_e) { skipped += 1; }
+        } catch { skipped += 1; }
       }
       try {
         await fetch(req.url, {
@@ -942,164 +607,89 @@ Deno.serve(async (req) => {
             companyId, userId, brief, outline, moduleId, moduleIndex,
           }),
         });
-      } catch (_e) { /* ignore */ }
+      } catch { /* ignore */ }
       return json({ ok: true, inserted, skipped, deprecated: true });
     }
 
-    // ----- Mode: materialize_finalize (recompute totals after all modules processed) -----
     if (mode === "materialize_finalize") {
       const { courseId } = body;
       if (!courseId) throw new Error("Missing courseId");
       const supabase = getServiceClient();
 
-      // Count surviving modules + lessons
       const { data: modulesRows } = await supabase
-        .from("modules").select("id").eq("course_id", courseId);
-      const moduleIds = (modulesRows || []).map((r: any) => r.id);
+        .from("modules").select("id, title").eq("course_id", courseId).order("sort_order");
+      const modules = modulesRows || [];
+      const moduleIds = modules.map((r: any) => r.id);
+
+      const lessonsByModule: Record<string, any[]> = {};
+      const quizzesByModule: Record<string, any[]> = {};
       let lessonsCount = 0;
+
       if (moduleIds.length) {
-        const { count } = await supabase
-          .from("lessons").select("id", { count: "exact", head: true })
-          .in("module_id", moduleIds);
-        lessonsCount = count || 0;
+        const { data: lessonsRows } = await supabase
+          .from("lessons").select("id, title, lesson_type, content, module_id, sort_order")
+          .in("module_id", moduleIds).order("sort_order");
+        for (const l of lessonsRows || []) {
+          (lessonsByModule[l.module_id] ||= []).push(l);
+          lessonsCount += 1;
+        }
+        const { data: quizzesRows } = await supabase
+          .from("quizzes").select("id, module_id").in("module_id", moduleIds);
+        const quizIds = (quizzesRows || []).map((q: any) => q.id);
+        let questionsByQuiz: Record<string, any[]> = {};
+        if (quizIds.length) {
+          const { data: qRows } = await supabase
+            .from("questions").select("quiz_id, question_text, question_type, options, correct_answer").in("quiz_id", quizIds);
+          for (const q of qRows || []) (questionsByQuiz[q.quiz_id] ||= []).push(q);
+        }
+        for (const q of quizzesRows || []) {
+          (quizzesByModule[q.module_id] ||= []).push({ id: q.id, questions: questionsByQuiz[q.id] || [] });
+        }
       }
 
-      const xpReward = Math.max(50, moduleIds.length * 50);
-      const estimatedDuration = Math.max(5, lessonsCount * 5 + moduleIds.length * 5);
+      const audit = auditCourse({ courseId, modules, lessonsByModule, quizzesByModule });
 
-      await supabase.from("courses").update({
+      const xpReward = Math.max(50, audit.validModules * 50);
+      const estimatedDuration = Math.max(5, audit.totalValidLessons * 5 + audit.validModules * 5);
+
+      const updatePayload: any = {
         xp_reward: xpReward,
         estimated_duration_minutes: estimatedDuration,
-      }).eq("id", courseId);
+      };
+      // Persistimos calidad dentro de source_brief para no requerir migración.
+      const { data: existing } = await supabase
+        .from("courses").select("source_brief").eq("id", courseId).single();
+      const newBrief = {
+        ...(existing?.source_brief || {}),
+        generation_quality: {
+          status: audit.qualityStatus,
+          validModules: audit.validModules,
+          totalModules: audit.totalModules,
+          totalValidLessons: audit.totalValidLessons,
+          totalLessons: audit.totalLessons,
+          warnings: audit.warnings.slice(0, 20),
+          errors: audit.errors.slice(0, 20),
+          audited_at: new Date().toISOString(),
+        },
+      };
+      updatePayload.source_brief = newBrief;
+      await supabase.from("courses").update(updatePayload).eq("id", courseId);
 
-      return json({ ok: true, modulesCount: moduleIds.length, lessonsCount });
-    }
-
-    // ----- Legacy single-shot materialize (kept for back-compat, NOT recommended). -----
-    if (mode === "materialize") {
-      throw new Error(
-        "Legacy 'materialize' mode disabled to avoid CPU limits. Use 'materialize_init' + 'materialize_module' chunks.",
-      );
-    }
-
-    // ----- LEGACY single-shot (back-compat) -----
-    if (!title) throw new Error("Missing title");
-    const legacyParts: any[] = [
-      {
-        type: "text",
-        text: `Genera un curso completo y detallado con la siguiente información:
-
-Título del curso: ${title}
-Nivel: ${level}
-Instrucciones adicionales: ${instructions || "Genera un curso completo y bien estructurado."}
-
-REGLAS:
-- 3 a 8 módulos, 2 a 5 lecciones por módulo, 3-5 bloques por lección.
-- Bloques tipo "heading" y "paragraph" en español.
-- Cada módulo con quiz de 3-5 preguntas (multiple_choice 4 opciones o true_false).
-- Usa la función generate_course_structure.`,
-      },
-    ];
-    if (pdfBase64) {
-      legacyParts.push({
-        type: "image_url",
-        image_url: { url: `data:application/pdf;base64,${pdfBase64}`, detail: "high" },
+      return json({
+        ok: audit.qualityStatus !== "failed",
+        qualityStatus: audit.qualityStatus,
+        report: audit,
       });
     }
-    if (Array.isArray(imageBase64s)) {
-      for (const img of imageBase64s) {
-        legacyParts.push({
-          type: "image_url",
-          image_url: {
-            url: img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`,
-            detail: "high",
-          },
-        });
-      }
-    }
-    const courseStructure = await callAi(
-      [{ role: "user", content: legacyParts }],
-      LEGACY_TOOL,
-      { temperature: 0.7, maxTokens: 16000 },
-    );
 
-    const supabase = getServiceClient();
-    const { data: course, error: courseError } = await supabase
-      .from("courses")
-      .insert({
-        title,
-        description: courseStructure.description || "",
-        level,
-        status: "draft",
-        company_id: companyId,
-        created_by: userId,
-        estimated_duration_minutes: courseStructure.estimated_duration_minutes || 30,
-        xp_reward: (courseStructure.modules?.length || 3) * 50,
-      })
-      .select("id")
-      .single();
-    if (courseError) throw new Error(`Course insert: ${courseError.message}`);
-    const courseId = course.id;
-
-    for (let mi = 0; mi < courseStructure.modules.length; mi++) {
-      const mod = courseStructure.modules[mi];
-      const { data: moduleData, error: moduleError } = await supabase
-        .from("modules")
-        .insert({
-          course_id: courseId,
-          title: mod.title,
-          description: mod.description || "",
-          sort_order: mi,
-          xp_reward: 25,
-        })
-        .select("id")
-        .single();
-      if (moduleError) continue;
-      const moduleId = moduleData.id;
-
-      if (Array.isArray(mod.lessons)) {
-        for (let li = 0; li < mod.lessons.length; li++) {
-          const lesson = mod.lessons[li];
-          await supabase.from("lessons").insert({
-            module_id: moduleId,
-            title: lesson.title,
-            content: { blocks: lesson.content_blocks || [] },
-            content_type: "text",
-            sort_order: li,
-            xp_reward: 10,
-          });
-        }
-      }
-
-      if (mod.quiz?.questions?.length > 0) {
-        const { data: quizData, error: quizError } = await supabase
-          .from("quizzes")
-          .insert({
-            module_id: moduleId,
-            title: `Quiz: ${mod.title}`,
-            passing_score: 70,
-            max_attempts: 3,
-            xp_reward: 25,
-          })
-          .select("id")
-          .single();
-        if (!quizError && quizData) {
-          for (let qi = 0; qi < mod.quiz.questions.length; qi++) {
-            const q = mod.quiz.questions[qi];
-            await supabase.from("questions").insert({
-              quiz_id: quizData.id,
-              question_text: q.question_text,
-              question_type: q.question_type || "multiple_choice",
-              options: q.options || [],
-              correct_answer: q.correct_answer,
-              sort_order: qi,
-            });
-          }
-        }
-      }
+    // Legacy single-shot ahora deshabilitado: forzamos a usar Course Studio.
+    if (mode === "materialize" || (!mode && (body.pdfBase64 || body.imageBase64s || body.instructions))) {
+      return json({
+        error: "El flujo legacy de generación está deshabilitado. Usá Course Studio (/app/admin/courses/studio) para crear cursos con validación de calidad.",
+      }, 400);
     }
 
-    return json({ courseId, modulesCount: courseStructure.modules.length });
+    return json({ error: `Unknown mode: ${mode || "(none)"}` }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("generate-course error:", message);
@@ -1115,8 +705,9 @@ function getServiceClient() {
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   return createClient(url, key);
 }
-function json(payload: unknown) {
+function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
+    status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
