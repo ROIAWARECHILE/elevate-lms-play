@@ -18,6 +18,27 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function requireAdminCaller(req: Request, supabase: any, companyId: string, userId: string) {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) throw new Error("Sesión requerida");
+
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  const caller = userData?.user;
+  if (userError || !caller) throw new Error("Sesión inválida");
+  if (caller.id !== userId) throw new Error("Usuario inválido para esta operación");
+
+  const [{ data: profile }, { data: roles }] = await Promise.all([
+    supabase.from("profiles").select("company_id").eq("id", caller.id).maybeSingle(),
+    supabase.from("user_roles").select("role").eq("user_id", caller.id),
+  ]);
+
+  const isAdmin = (roles || []).some((r: any) => r.role === "admin");
+  if (!isAdmin || profile?.company_id !== companyId) {
+    throw new Error("Solo administradores de la empresa pueden crear cursos");
+  }
+}
+
 // ---------- AI helpers ----------
 
 function getAiConfig() {
