@@ -145,19 +145,25 @@ export default function Auth() {
         }
 
         if (!data.session) {
-          justRegisteredRef.current = false;
-          setConfirmationEmail(email);
-          toast({
-            title: "¡Cuenta creada!",
-            description: "Revisa tu correo para confirmar tu cuenta antes de elegir tu rol.",
-          });
-          return;
+          // Email confirmation is required (Supabase setting). Try to sign in
+          // immediately — works when "Confirm email" is disabled in test mode.
+          const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+          if (signInError) {
+            justRegisteredRef.current = false;
+            setConfirmationEmail(email);
+            toast({
+              title: "¡Cuenta creada!",
+              description: "Revisa tu correo para confirmar tu cuenta antes de elegir tu rol.",
+            });
+            return;
+          }
         }
 
         toast({
           title: "¡Cuenta creada!",
           description: "Ahora elige cómo quieres usar Kibbo.",
         });
+        navigate("/auth?choose=true", { replace: true });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
