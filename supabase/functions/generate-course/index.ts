@@ -39,6 +39,22 @@ async function requireAdminCaller(req: Request, supabase: any, companyId: string
   }
 }
 
+async function deleteDraftCourseTree(supabase: any, courseId: string) {
+  const { data: modules } = await supabase.from("modules").select("id").eq("course_id", courseId);
+  const moduleIds = (modules || []).map((m: any) => m.id);
+  if (moduleIds.length) {
+    const { data: quizzes } = await supabase.from("quizzes").select("id").in("module_id", moduleIds);
+    const quizIds = (quizzes || []).map((q: any) => q.id);
+    if (quizIds.length) await supabase.from("questions").delete().in("quiz_id", quizIds);
+    await supabase.from("quizzes").delete().in("module_id", moduleIds);
+    await supabase.from("lessons").delete().in("module_id", moduleIds);
+    await supabase.from("modules").delete().eq("course_id", courseId);
+  }
+  await supabase.from("course_sources").delete().eq("course_id", courseId);
+  await supabase.from("course_dictionary").delete().eq("course_id", courseId);
+  await supabase.from("courses").delete().eq("id", courseId).eq("status", "draft");
+}
+
 // ---------- AI helpers ----------
 
 function getAiConfig() {
