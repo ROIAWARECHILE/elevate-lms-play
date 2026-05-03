@@ -124,34 +124,20 @@ export default function QuizView() {
 
   const saveResult = async (finalCorrect: number) => {
     if (!user || !profile) return;
-    const isDuplicate = await checkDuplicateProgress(user.id, "quiz_id", quizId!);
-    if (isDuplicate) return;
-
-    const score = Math.round((finalCorrect / questions.length) * 100);
-    const passed = score >= (quiz?.passing_score || 70);
 
     try {
-      await supabase.from("user_progress").insert({
-        user_id: user.id,
-        company_id: profile.company_id!,
-        course_id: courseId!,
-        module_id: quiz?.module_id,
-        quiz_id: quizId!,
-        completed: true,
-        score,
-        xp_earned: passed ? (quiz?.xp_reward || 25) : 0,
-        completed_at: new Date().toISOString(),
+      const { data: rpcData, error: rpcErr } = await supabase.rpc("record_quiz_completion", {
+        _quiz_id: quizId!,
+        _correct: finalCorrect,
+        _total: questions.length,
       });
+      if (rpcErr) throw rpcErr;
+      const result0 = (rpcData ?? {}) as { duplicate?: boolean; passed?: boolean; xp_earned?: number; score?: number };
+      if (result0.duplicate) return;
+      const passed = !!result0.passed;
+      const xpReward = result0.xp_earned ?? 0;
 
       if (passed) {
-        const xpReward = quiz?.xp_reward || 25;
-        await supabase.from("user_xp_log").insert({
-          user_id: user.id,
-          company_id: profile.company_id!,
-          xp_amount: xpReward,
-          source: "quiz",
-          source_id: quizId!,
-        });
 
         const result = await updateStreakAndLevel({
           userId: user.id,
