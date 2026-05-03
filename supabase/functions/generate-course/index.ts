@@ -438,6 +438,9 @@ Deno.serve(async (req) => {
 
     if (!companyId || !userId) throw new Error("Missing companyId/userId");
 
+    const supabase = getServiceClient();
+    await requireAdminCaller(req, supabase, companyId, userId);
+
     if (mode === "extract") {
       if (!Array.isArray(sources) || sources.length === 0) throw new Error("Debes proporcionar al menos una fuente.");
       const out = await stepExtract(sources, userNotes || "");
@@ -459,7 +462,6 @@ Deno.serve(async (req) => {
 
     if (mode === "materialize_init") {
       if (!brief || !outline || !title) throw new Error("Missing brief/outline/title");
-      const supabase = getServiceClient();
       const { data: course, error: courseError } = await supabase
         .from("courses")
         .insert({
@@ -517,8 +519,6 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const lesson = mod.lessons?.[lessonIndex];
       if (!lesson) throw new Error("Lesson index out of range");
-      const supabase = getServiceClient();
-
       try {
         const { blocks, repaired } = await stepMaterializeLesson(brief, mod.title, lesson);
         await supabase.from("lessons").insert({
@@ -551,8 +551,6 @@ Deno.serve(async (req) => {
       if (!brief || !outline || !moduleId) throw new Error("Missing brief/outline/moduleId");
       const mod = outline.modules?.[moduleIndex];
       if (!mod) throw new Error("Module index out of range");
-      const supabase = getServiceClient();
-
       const { count: lessonCount } = await supabase
         .from("lessons").select("id", { count: "exact", head: true }).eq("module_id", moduleId);
       if (!lessonCount) {
@@ -635,8 +633,6 @@ Deno.serve(async (req) => {
     if (mode === "materialize_finalize") {
       const { courseId } = body;
       if (!courseId) throw new Error("Missing courseId");
-      const supabase = getServiceClient();
-
       const { data: modulesRows } = await supabase
         .from("modules").select("id, title").eq("course_id", courseId).order("sort_order");
       const modules = modulesRows || [];
