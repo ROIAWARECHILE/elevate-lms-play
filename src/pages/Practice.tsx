@@ -109,12 +109,7 @@ export default function Practice() {
     setPhase("summary");
     if (xpEarned > 0 && user && profile?.company_id) {
       try {
-        await supabase.from("user_xp_log").insert({
-          user_id: user.id,
-          company_id: profile.company_id,
-          xp_amount: xpEarned,
-          source: "practice",
-        });
+        await supabase.rpc("record_practice_xp", { _xp: xpEarned });
         const newXp = (profile.xp_total ?? 0) + xpEarned;
         const newLevel = Math.floor(newXp / 100) + 1;
         await supabase
