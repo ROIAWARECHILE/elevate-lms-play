@@ -894,6 +894,12 @@ export type Database = {
         Args: { _course_id: string; _user_id: string }
         Returns: undefined
       }
+      record_lesson_completion: { Args: { _lesson_id: string }; Returns: Json }
+      record_practice_xp: { Args: { _xp: number }; Returns: Json }
+      record_quiz_completion: {
+        Args: { _correct: number; _quiz_id: string; _total: number }
+        Returns: Json
+      }
       reject_user: { Args: { _target_user_id: string }; Returns: undefined }
       remove_user_from_company: {
         Args: { _target_user_id: string }
