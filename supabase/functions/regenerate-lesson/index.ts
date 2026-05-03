@@ -118,6 +118,7 @@ Deno.serve(async (req) => {
     if (mode === "convert" && !LESSON_TYPES.includes(newType)) throw new Error("newType inválido");
 
     const supabase = getServiceClient();
+    await requireAdminCaller(req, supabase, companyId);
 
     const { data: lesson, error: le } = await supabase
       .from("lessons")
