@@ -407,23 +407,90 @@ ${schemaHint}
 Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real.`;
 
   let lastReason = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let bestSanitized: any[] = [];
+  let bestRaw = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
     const text = attempt === 0
       ? baseText
-      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: ${lastReason}. Esta vez SOLO bloques con la forma exacta indicada y al menos ${minBlocks} válidos.`;
+      : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: ${lastReason}. Esta vez SOLO bloques con la forma exacta indicada y al menos ${minBlocks} válidos. NO uses {"type":"${lesson.lesson_type}"} — usa los subtipos exactos del FORMATO REQUERIDO.`;
     const result = await callAi(
       [{ role: "user", content: [{ type: "text", text }] }],
       MATERIALIZE_LESSON_TOOL,
       { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000 },
     );
     const raw = Array.isArray(result?.blocks) ? result.blocks : [];
-    const sanitized = sanitizeBlocksForLessonType(lesson.lesson_type, raw);
+    const coerced = raw.map((b: any) => coerceBlock(lesson.lesson_type, b));
+    const sanitized = sanitizeBlocksForLessonType(lesson.lesson_type, coerced);
+    if (sanitized.length > bestSanitized.length) { bestSanitized = sanitized; bestRaw = raw.length; }
     if (blocksMeetMinimum(lesson.lesson_type, sanitized)) {
       return { blocks: sanitized, repaired: attempt > 0, raw_count: raw.length };
     }
     lastReason = `${sanitized.length} bloques válidos de ${raw.length} (mínimo ${minBlocks})`;
   }
+  // Fallback: complete with synthetic blocks derived from lesson metadata so generation never hard-fails
+  const fb = buildFallbackBlocks(lesson, minBlocks - bestSanitized.length);
+  const merged = [...bestSanitized, ...fb];
+  if (blocksMeetMinimum(lesson.lesson_type, merged)) {
+    console.warn(`Lesson "${lesson.title}" usó fallback (${fb.length} bloques sintéticos)`);
+    return { blocks: merged, repaired: true, raw_count: bestRaw, fallback: true };
+  }
   throw new Error(`Lesson "${lesson.title}" no produjo bloques válidos para tipo ${lesson.lesson_type} (${lastReason})`);
+}
+
+function coerceBlock(lessonType: string, b: any): any {
+  if (!b || typeof b !== "object") return b;
+  // Si el modelo puso type=lesson_type en lugar de subtipo, intentar mapear
+  if (b.type === lessonType) {
+    if (lessonType === "reading" && typeof b.text === "string") return { ...b, type: "paragraph" };
+    if (lessonType === "concept" && b.term && b.definition) return { ...b, type: "term" };
+    if (lessonType === "flashcards" && b.front && b.back) return { ...b, type: "flashcard" };
+    if (lessonType === "steps" && b.title && b.description) return { ...b, type: "step" };
+    if (lessonType === "sop_walkthrough" && b.title && b.description) return { ...b, type: "sop_step" };
+    if (lessonType === "video_embed" && b.url) return { ...b, type: "video" };
+    if (lessonType === "comparison" && b.headers && b.rows) return { ...b, type: "comparison_table" };
+  }
+  // reading: bloques sin type pero con text → paragraph
+  if (lessonType === "reading" && !b.type && typeof b.text === "string") return { ...b, type: "paragraph" };
+  // reading: aliases
+  if (lessonType === "reading") {
+    if (b.type === "title" && typeof b.text === "string") return { ...b, type: "heading", level: 2 };
+    if (b.type === "subheading" && typeof b.text === "string") return { ...b, type: "heading", level: 2 };
+    if (b.type === "text" && typeof b.text === "string") return { ...b, type: "paragraph" };
+  }
+  return b;
+}
+
+function buildFallbackBlocks(lesson: any, count: number): any[] {
+  const n = Math.max(1, count);
+  const t = lesson.lesson_type;
+  const title = String(lesson.title || "Lección");
+  const objective = String(lesson.objective || "");
+  const evidence: string[] = Array.isArray(lesson.evidence) ? lesson.evidence.filter((x: any) => typeof x === "string" && x.trim()) : [];
+  const out: any[] = [];
+  if (t === "reading") {
+    out.push({ type: "heading", text: title, level: 2 });
+    if (objective) out.push({ type: "paragraph", text: objective });
+    for (const e of evidence) out.push({ type: "paragraph", text: e });
+    while (out.length < n + 1) out.push({ type: "paragraph", text: objective || title });
+  } else if (t === "concept") {
+    for (const e of evidence) out.push({ type: "term", term: title, definition: e });
+    while (out.length < n) out.push({ type: "term", term: title, definition: objective || title });
+  } else if (t === "flashcards") {
+    for (const e of evidence) out.push({ type: "flashcard", front: title, back: e });
+    while (out.length < n) out.push({ type: "flashcard", front: title, back: objective || title });
+  } else if (t === "steps" || t === "sop_walkthrough") {
+    const sub = t === "steps" ? "step" : "sop_step";
+    let i = 1;
+    for (const e of evidence) { out.push({ type: sub, n: i, title: `Paso ${i}`, description: e }); i++; }
+    while (out.length < n) { out.push({ type: sub, n: i, title: `Paso ${i}`, description: objective || title }); i++; }
+  } else if (t === "case_study") {
+    out.push({ type: "scenario", title, text: objective || evidence[0] || title });
+    out.push({ type: "question", text: `¿Cómo aplicarías esto en "${title}"?` });
+  } else {
+    // tipos sin fallback seguro
+    return [];
+  }
+  return out;
 }
 
 async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any[]) {
