@@ -512,7 +512,7 @@ Deno.serve(async (req) => {
         const mod = outline.modules[mi];
         const lessonCount = Array.isArray(mod.lessons) ? mod.lessons.length : 0;
         if (!String(mod.title || "").trim() || lessonCount === 0) {
-          await supabase.from("courses").delete().eq("id", courseId);
+          await deleteDraftCourseTree(supabase, courseId);
           throw new Error(`Outline inválido: el módulo ${mi + 1} no tiene título o lecciones.`);
         }
         const { data: moduleData, error: moduleError } = await supabase
@@ -527,7 +527,7 @@ Deno.serve(async (req) => {
           .select("id")
           .single();
         if (moduleError) {
-          await supabase.from("courses").delete().eq("id", courseId);
+          await deleteDraftCourseTree(supabase, courseId);
           throw new Error(`Module insert: ${moduleError.message}`);
         }
         moduleIds.push(moduleData.id);
