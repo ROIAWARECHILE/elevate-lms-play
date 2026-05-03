@@ -73,9 +73,18 @@ Deno.serve(async (req) => {
 
         // Intentar reparar con regenerate-lesson
         try {
-          const { data: rd, error: re } = await supabase.functions.invoke("regenerate-lesson", {
-            body: { lessonId: l.id, companyId, mode: "regenerate" },
+          const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/regenerate-lesson`;
+          const response = await fetch(fnUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: req.headers.get("Authorization") || "",
+              apikey: Deno.env.get("SUPABASE_ANON_KEY") || "",
+            },
+            body: JSON.stringify({ lessonId: l.id, companyId, mode: "regenerate" }),
           });
+          const rd = await response.json().catch(() => ({}));
+          const re = response.ok ? null : { message: rd?.error || `HTTP ${response.status}` };
           if (re || rd?.error) {
             stillBroken.push({ lesson: l.title, module: mod.title, reason: rd?.error || re?.message || "regenerate falló" });
           } else {
