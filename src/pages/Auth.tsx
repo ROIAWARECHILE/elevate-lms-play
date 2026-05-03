@@ -139,12 +139,27 @@ export default function Auth() {
             emailRedirectTo: `${APP_URL}/auth?choose=true`,
           },
         });
-        if (error) {
-          justRegisteredRef.current = false;
-          throw error;
-        }
 
-        if (!data.session) {
+        // Handle rate limit / email send errors gracefully in test mode:
+        // try to sign in directly — the user may already exist or the account
+        // may have been created without the confirmation email being sent.
+        if (error) {
+          const msg = (error.message || "").toLowerCase();
+          const isRateLimit = msg.includes("rate limit") || msg.includes("email rate") || msg.includes("over_email_send_rate_limit");
+          const alreadyRegistered = msg.includes("already registered") || msg.includes("user already");
+          if (isRateLimit || alreadyRegistered) {
+            const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+            if (signInError) {
+              justRegisteredRef.current = false;
+              throw isRateLimit
+                ? new Error("Demasiados intentos de registro. Espera unos minutos o intenta iniciar sesión.")
+                : new Error("Este correo ya está registrado. Inicia sesión.");
+            }
+          } else {
+            justRegisteredRef.current = false;
+            throw error;
+          }
+        } else if (!data.session) {
           // Email confirmation is required (Supabase setting). Try to sign in
           // immediately — works when "Confirm email" is disabled in test mode.
           const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
