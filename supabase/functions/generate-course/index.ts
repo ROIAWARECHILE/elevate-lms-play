@@ -549,8 +549,8 @@ Deno.serve(async (req) => {
         return json({ ok: true, inserted: 1, blocks: blocks.length, repaired });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        console.error("Lesson materialize failed (skipping):", lesson.title, message);
-        return json({ ok: true, inserted: 0, skipped: lesson.title, reason: message });
+        console.error("Lesson materialize failed:", lesson.title, message);
+        return json({ error: `No se pudo generar la lección "${lesson.title}": ${message}` }, 422);
       }
     }
 
