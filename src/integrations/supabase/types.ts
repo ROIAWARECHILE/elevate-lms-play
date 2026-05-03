@@ -889,6 +889,10 @@ export type Database = {
       }
       join_company_by_code: { Args: { _code: string }; Returns: string }
       join_company_by_slug: { Args: { _slug: string }; Returns: string }
+      lesson_valid_block_count: {
+        Args: { _content: Json; _lesson_type: string }
+        Returns: number
+      }
       publish_course_if_valid: { Args: { _course_id: string }; Returns: Json }
       recalc_skill_profile: {
         Args: { _course_id: string; _user_id: string }
@@ -909,6 +913,7 @@ export type Database = {
         Args: { _target_user_id: string }
         Returns: undefined
       }
+      safe_jsonb_array_length: { Args: { _value: Json }; Returns: number }
       srs_due_count: { Args: never; Returns: number }
       srs_enqueue: {
         Args: {

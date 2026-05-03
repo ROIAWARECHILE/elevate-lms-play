@@ -18,6 +18,43 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function requireAdminCaller(req: Request, supabase: any, companyId: string, userId: string) {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) throw new Error("Sesión requerida");
+
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  const caller = userData?.user;
+  if (userError || !caller) throw new Error("Sesión inválida");
+  if (caller.id !== userId) throw new Error("Usuario inválido para esta operación");
+
+  const [{ data: profile }, { data: roles }] = await Promise.all([
+    supabase.from("profiles").select("company_id").eq("id", caller.id).maybeSingle(),
+    supabase.from("user_roles").select("role").eq("user_id", caller.id),
+  ]);
+
+  const isAdmin = (roles || []).some((r: any) => r.role === "admin");
+  if (!isAdmin || profile?.company_id !== companyId) {
+    throw new Error("Solo administradores de la empresa pueden crear cursos");
+  }
+}
+
+async function deleteDraftCourseTree(supabase: any, courseId: string) {
+  const { data: modules } = await supabase.from("modules").select("id").eq("course_id", courseId);
+  const moduleIds = (modules || []).map((m: any) => m.id);
+  if (moduleIds.length) {
+    const { data: quizzes } = await supabase.from("quizzes").select("id").in("module_id", moduleIds);
+    const quizIds = (quizzes || []).map((q: any) => q.id);
+    if (quizIds.length) await supabase.from("questions").delete().in("quiz_id", quizIds);
+    await supabase.from("quizzes").delete().in("module_id", moduleIds);
+    await supabase.from("lessons").delete().in("module_id", moduleIds);
+    await supabase.from("modules").delete().eq("course_id", courseId);
+  }
+  await supabase.from("course_sources").delete().eq("course_id", courseId);
+  await supabase.from("course_dictionary").delete().eq("course_id", courseId);
+  await supabase.from("courses").delete().eq("id", courseId).eq("status", "draft");
+}
+
 // ---------- AI helpers ----------
 
 function getAiConfig() {
@@ -417,6 +454,9 @@ Deno.serve(async (req) => {
 
     if (!companyId || !userId) throw new Error("Missing companyId/userId");
 
+    const supabase = getServiceClient();
+    await requireAdminCaller(req, supabase, companyId, userId);
+
     if (mode === "extract") {
       if (!Array.isArray(sources) || sources.length === 0) throw new Error("Debes proporcionar al menos una fuente.");
       const out = await stepExtract(sources, userNotes || "");
@@ -438,7 +478,6 @@ Deno.serve(async (req) => {
 
     if (mode === "materialize_init") {
       if (!brief || !outline || !title) throw new Error("Missing brief/outline/title");
-      const supabase = getServiceClient();
       const { data: course, error: courseError } = await supabase
         .from("courses")
         .insert({
@@ -471,6 +510,11 @@ Deno.serve(async (req) => {
       const moduleIds: string[] = [];
       for (let mi = 0; mi < (outline.modules || []).length; mi++) {
         const mod = outline.modules[mi];
+        const lessonCount = Array.isArray(mod.lessons) ? mod.lessons.length : 0;
+        if (!String(mod.title || "").trim() || lessonCount === 0) {
+          await deleteDraftCourseTree(supabase, courseId);
+          throw new Error(`Outline inválido: el módulo ${mi + 1} no tiene título o lecciones.`);
+        }
         const { data: moduleData, error: moduleError } = await supabase
           .from("modules")
           .insert({
@@ -482,7 +526,10 @@ Deno.serve(async (req) => {
           })
           .select("id")
           .single();
-        if (moduleError) { console.error("Module insert:", moduleError); moduleIds.push(""); continue; }
+        if (moduleError) {
+          await deleteDraftCourseTree(supabase, courseId);
+          throw new Error(`Module insert: ${moduleError.message}`);
+        }
         moduleIds.push(moduleData.id);
       }
 
@@ -496,8 +543,6 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const lesson = mod.lessons?.[lessonIndex];
       if (!lesson) throw new Error("Lesson index out of range");
-      const supabase = getServiceClient();
-
       try {
         const { blocks, repaired } = await stepMaterializeLesson(brief, mod.title, lesson);
         await supabase.from("lessons").insert({
@@ -520,8 +565,8 @@ Deno.serve(async (req) => {
         return json({ ok: true, inserted: 1, blocks: blocks.length, repaired });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        console.error("Lesson materialize failed (skipping):", lesson.title, message);
-        return json({ ok: true, inserted: 0, skipped: lesson.title, reason: message });
+        console.error("Lesson materialize failed:", lesson.title, message);
+        return json({ error: `No se pudo generar la lección "${lesson.title}": ${message}` }, 422);
       }
     }
 
@@ -530,8 +575,6 @@ Deno.serve(async (req) => {
       if (!brief || !outline || !moduleId) throw new Error("Missing brief/outline/moduleId");
       const mod = outline.modules?.[moduleIndex];
       if (!mod) throw new Error("Module index out of range");
-      const supabase = getServiceClient();
-
       const { count: lessonCount } = await supabase
         .from("lessons").select("id", { count: "exact", head: true }).eq("module_id", moduleId);
       if (!lessonCount) {
@@ -614,8 +657,6 @@ Deno.serve(async (req) => {
     if (mode === "materialize_finalize") {
       const { courseId } = body;
       if (!courseId) throw new Error("Missing courseId");
-      const supabase = getServiceClient();
-
       const { data: modulesRows } = await supabase
         .from("modules").select("id, title").eq("course_id", courseId).order("sort_order");
       const modules = modulesRows || [];
@@ -703,7 +744,9 @@ Deno.serve(async (req) => {
 function getServiceClient() {
   const url = Deno.env.get("SUPABASE_URL")!;
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  return createClient(url, key);
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
