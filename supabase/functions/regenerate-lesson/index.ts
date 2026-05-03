@@ -88,7 +88,24 @@ async function callAi(messages: any[], opts: { temperature?: number } = {}) {
 }
 
 function getServiceClient() {
-  return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  return createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+async function requireAdminCaller(req: Request, supabase: any, companyId: string) {
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) throw new Error("Sesión requerida");
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  const caller = userData?.user;
+  if (userError || !caller) throw new Error("Sesión inválida");
+  const [{ data: profile }, { data: roles }] = await Promise.all([
+    supabase.from("profiles").select("company_id").eq("id", caller.id).maybeSingle(),
+    supabase.from("user_roles").select("role").eq("user_id", caller.id),
+  ]);
+  const isAdmin = (roles || []).some((r: any) => r.role === "admin");
+  if (!isAdmin || profile?.company_id !== companyId) throw new Error("No autorizado");
 }
 
 Deno.serve(async (req) => {
