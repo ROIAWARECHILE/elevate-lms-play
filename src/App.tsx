@@ -7,6 +7,8 @@ import { AuthProvider } from "@/hooks/useAuth";
 
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import Onboarding from "./pages/Onboarding";
 import JoinCompany from "./pages/JoinCompany";
 import Dashboard from "./pages/Dashboard";
@@ -43,6 +45,8 @@ const App = () => (
             {/* Public routes */}
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/join" element={<JoinCompany />} />
 
