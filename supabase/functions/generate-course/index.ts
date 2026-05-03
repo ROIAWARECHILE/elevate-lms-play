@@ -494,6 +494,11 @@ Deno.serve(async (req) => {
       const moduleIds: string[] = [];
       for (let mi = 0; mi < (outline.modules || []).length; mi++) {
         const mod = outline.modules[mi];
+        const lessonCount = Array.isArray(mod.lessons) ? mod.lessons.length : 0;
+        if (!String(mod.title || "").trim() || lessonCount === 0) {
+          await supabase.from("courses").delete().eq("id", courseId);
+          throw new Error(`Outline inválido: el módulo ${mi + 1} no tiene título o lecciones.`);
+        }
         const { data: moduleData, error: moduleError } = await supabase
           .from("modules")
           .insert({
@@ -505,7 +510,10 @@ Deno.serve(async (req) => {
           })
           .select("id")
           .single();
-        if (moduleError) { console.error("Module insert:", moduleError); moduleIds.push(""); continue; }
+        if (moduleError) {
+          await supabase.from("courses").delete().eq("id", courseId);
+          throw new Error(`Module insert: ${moduleError.message}`);
+        }
         moduleIds.push(moduleData.id);
       }
 
