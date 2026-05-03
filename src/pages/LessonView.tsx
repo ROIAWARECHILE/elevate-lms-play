@@ -73,37 +73,17 @@ export default function LessonView() {
     setCompleting(true);
 
     try {
-      const isDuplicate = await checkDuplicateProgress(user.id, "lesson_id", lessonId!);
-      if (isDuplicate) {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc("record_lesson_completion", {
+        _lesson_id: lessonId!,
+      });
+      if (rpcErr) throw rpcErr;
+      const result1 = (rpcData ?? {}) as { duplicate?: boolean; xp_earned?: number };
+      if (result1.duplicate) {
         setCompleted(true);
         setCompleting(false);
         return;
       }
-
-      // PR7 — XP por aprendizaje real: bonus ×1.5 si la lección es retrieval (interactive_quiz)
-      const baseXp = lesson.xp_reward || 10;
-      const xpReward = lesson.lesson_type === "interactive_quiz"
-        ? Math.round(baseXp * 1.5)
-        : baseXp;
-
-      await supabase.from("user_progress").insert({
-        user_id: user.id,
-        company_id: profile.company_id!,
-        course_id: courseId!,
-        module_id: lesson.module_id,
-        lesson_id: lessonId!,
-        completed: true,
-        xp_earned: xpReward,
-        completed_at: new Date().toISOString(),
-      });
-
-      await supabase.from("user_xp_log").insert({
-        user_id: user.id,
-        company_id: profile.company_id!,
-        xp_amount: xpReward,
-        source: "lesson",
-        source_id: lessonId!,
-      });
+      const xpReward = result1.xp_earned ?? 0;
 
       const result = await updateStreakAndLevel({
         userId: user.id,
