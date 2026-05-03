@@ -139,12 +139,27 @@ export default function Auth() {
             emailRedirectTo: `${APP_URL}/auth?choose=true`,
           },
         });
-        if (error) {
-          justRegisteredRef.current = false;
-          throw error;
-        }
 
-        if (!data.session) {
+        // Handle rate limit / email send errors gracefully in test mode:
+        // try to sign in directly — the user may already exist or the account
+        // may have been created without the confirmation email being sent.
+        if (error) {
+          const msg = (error.message || "").toLowerCase();
+          const isRateLimit = msg.includes("rate limit") || msg.includes("email rate") || msg.includes("over_email_send_rate_limit");
+          const alreadyRegistered = msg.includes("already registered") || msg.includes("user already");
+          if (isRateLimit || alreadyRegistered) {
+            const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+            if (signInError) {
+              justRegisteredRef.current = false;
+              throw isRateLimit
+                ? new Error("Demasiados intentos de registro. Espera unos minutos o intenta iniciar sesión.")
+                : new Error("Este correo ya está registrado. Inicia sesión.");
+            }
+          } else {
+            justRegisteredRef.current = false;
+            throw error;
+          }
+        } else if (!data.session) {
           // Email confirmation is required (Supabase setting). Try to sign in
           // immediately — works when "Confirm email" is disabled in test mode.
           const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
@@ -300,17 +315,7 @@ export default function Auth() {
                 />
               </div>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Contraseña</Label>
-                  {!isRegister && (
-                    <Link
-                      to="/forgot-password"
-                      className="text-xs text-muted-foreground hover:text-primary transition-colors"
-                    >
-                      ¿Olvidaste tu contraseña?
-                    </Link>
-                  )}
-                </div>
+                <Label htmlFor="password">Contraseña</Label>
                 <Input
                   id="password"
                   type="password"
@@ -330,6 +335,16 @@ export default function Auth() {
                 {isRegister ? "Crear cuenta" : "Iniciar sesión"}
               </Button>
             </form>
+            {!isRegister && (
+              <div className="mt-4 text-center">
+                <Link
+                  to="/forgot-password"
+                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  ¿Olvidaste tu contraseña?
+                </Link>
+              </div>
+            )}
             <div className="mt-6 text-center">
               <button
                 type="button"
