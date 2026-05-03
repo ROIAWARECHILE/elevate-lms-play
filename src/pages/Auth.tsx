@@ -315,17 +315,7 @@ export default function Auth() {
                 />
               </div>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Contraseña</Label>
-                  {!isRegister && (
-                    <Link
-                      to="/forgot-password"
-                      className="text-xs text-muted-foreground hover:text-primary transition-colors"
-                    >
-                      ¿Olvidaste tu contraseña?
-                    </Link>
-                  )}
-                </div>
+                <Label htmlFor="password">Contraseña</Label>
                 <Input
                   id="password"
                   type="password"
