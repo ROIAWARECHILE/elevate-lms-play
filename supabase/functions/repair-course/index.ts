@@ -39,9 +39,10 @@ Deno.serve(async (req) => {
 
   try {
     const { courseId, companyId } = await req.json();
-    if (!courseId || !companyId) throw new Error("courseId y companyId son requeridos");
+      if (!courseId || !companyId) throw new Error("courseId y companyId son requeridos");
 
     const supabase = getServiceClient();
+      await requireAdminCaller(req, supabase, companyId);
 
     const { data: course, error: ce } = await supabase
       .from("courses").select("id, company_id, title").eq("id", courseId).single();
