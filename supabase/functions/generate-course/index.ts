@@ -643,17 +643,19 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const lesson = mod.lessons?.[lessonIndex];
       if (!lesson) throw new Error("Lesson index out of range");
-      try {
-        const { blocks, repaired } = await stepMaterializeLesson(brief, mod.title, lesson);
+      const tryInsert = async (lessonObj: any) => {
+        const { blocks, repaired, fallback } = await stepMaterializeLesson(brief, mod.title, lessonObj);
         await supabase.from("lessons").insert({
           module_id: moduleId,
-          title: lesson.title,
-          lesson_type: lesson.lesson_type || "reading",
+          title: lessonObj.title,
+          lesson_type: lessonObj.lesson_type || "reading",
           content: {
             blocks,
             validation: {
               status: "valid",
               repaired,
+              fallback: !!fallback,
+              degraded_from: lessonObj._degraded_from || null,
               block_count: blocks.length,
               validated_at: new Date().toISOString(),
             },
@@ -662,10 +664,23 @@ Deno.serve(async (req) => {
           sort_order: typeof sortOrder === "number" ? sortOrder : lessonIndex,
           xp_reward: 10,
         });
-        return json({ ok: true, inserted: 1, blocks: blocks.length, repaired });
+        return { ok: true, inserted: 1, blocks: blocks.length, repaired, fallback: !!fallback };
+      };
+      try {
+        return json(await tryInsert(lesson));
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        console.error("Lesson materialize failed:", lesson.title, message);
+        console.warn("Lesson failed, degrading to reading:", lesson.title, message);
+        // Degradación: reintentar como "reading" antes de rendirse
+        if (lesson.lesson_type !== "reading") {
+          try {
+            return json(await tryInsert({ ...lesson, lesson_type: "reading", _degraded_from: lesson.lesson_type }));
+          } catch (e2) {
+            const m2 = e2 instanceof Error ? e2.message : String(e2);
+            console.error("Reading fallback also failed:", lesson.title, m2);
+            return json({ error: `No se pudo generar la lección "${lesson.title}": ${m2}` }, 422);
+          }
+        }
         return json({ error: `No se pudo generar la lección "${lesson.title}": ${message}` }, 422);
       }
     }
