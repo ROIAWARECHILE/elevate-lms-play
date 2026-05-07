@@ -57,7 +57,7 @@ async function deleteDraftCourseTree(supabase: any, courseId: string) {
 
 // ---------- AI helpers ----------
 
-function getAiConfig() {
+function getAiConfig(opts: { fast?: boolean } = {}) {
   const API_KEY = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("OPENAI_API_KEY");
   if (!API_KEY) throw new Error("LOVABLE_API_KEY not configured");
   const useLovable = !!Deno.env.get("LOVABLE_API_KEY");
@@ -66,10 +66,11 @@ function getAiConfig() {
     url: useLovable
       ? "https://ai.gateway.lovable.dev/v1/chat/completions"
       : "https://api.openai.com/v1/chat/completions",
-    // Pro mantiene mejor calidad para multimodal (PDFs/imágenes); seguimos con él
-    // porque la extracción se basa en visión. Materialización podría usar Flash, pero
-    // mantenemos un solo modelo para simplificar.
-    model: useLovable ? "google/gemini-2.5-pro" : "gpt-4o",
+    // Flash para tareas con texto ya estructurado (LlamaParse markdown);
+    // Pro para extracción multimodal cuando el contenido viene como imagen/PDF.
+    model: useLovable
+      ? (opts.fast ? "google/gemini-2.5-flash" : "google/gemini-2.5-pro")
+      : "gpt-4o",
   };
 }
 
