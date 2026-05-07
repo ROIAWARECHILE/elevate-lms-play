@@ -153,14 +153,52 @@ export default function CourseStudio() {
       }
       try {
         const payload = await fileToBase64(f);
-        next.push({ id: crypto.randomUUID(), kind, name: f.name, payload });
+        // Parsear con LlamaParse para obtener markdown estructurado.
+        setProgressMsg(`Parseando ${f.name} con LlamaParse…`);
+        try {
+          const { data, error } = await supabase.functions.invoke("parse-source", {
+            body: { kind, name: f.name, payload },
+          });
+          if (error || data?.error) throw new Error(data?.error || error?.message || "parse failed");
+          const md = String(data?.markdown || "").trim();
+          if (md.length > 50) {
+            next.push({
+              id: crypto.randomUUID(),
+              kind: "text",
+              name: f.name,
+              payload: md,
+              metadata: {
+                parser: "llamaparse",
+                original_kind: kind,
+                job_id: data.job_id,
+                pages: data.pages,
+                stats: data.stats,
+              },
+            });
+            continue;
+          }
+          // Markdown vacío: caemos al modo visión clásico
+          throw new Error("markdown vacío");
+        } catch (parseErr: any) {
+          console.warn("LlamaParse falló, usando modo visión:", parseErr?.message);
+          toast({
+            title: "Parseado básico",
+            description: `${f.name}: usando modo visión (LlamaParse no disponible).`,
+          });
+          next.push({ id: crypto.randomUUID(), kind, name: f.name, payload });
+        }
       } catch {
         toast({ title: "Error", description: `No se pudo leer ${f.name}`, variant: "destructive" });
       }
     }
+    setProgressMsg("");
     if (next.length) {
       setSources((s) => [...s, ...next]);
-      toast({ title: "Fuente añadida", description: `${next.length} archivo(s) cargados.` });
+      const parsed = next.filter((n) => n.metadata?.parser === "llamaparse").length;
+      toast({
+        title: "Fuente añadida",
+        description: `${next.length} archivo(s) cargados${parsed ? ` · ${parsed} parseado(s) con LlamaParse` : ""}.`,
+      });
     }
     if (inputEl) inputEl.value = "";
   };
