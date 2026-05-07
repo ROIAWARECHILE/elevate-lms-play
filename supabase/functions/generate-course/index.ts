@@ -456,7 +456,31 @@ function coerceBlock(lessonType: string, b: any): any {
     if (lessonType === "steps" && b.title && b.description) return { ...b, type: "step" };
     if (lessonType === "sop_walkthrough" && b.title && b.description) return { ...b, type: "sop_step" };
     if (lessonType === "video_embed" && b.url) return { ...b, type: "video" };
-    if (lessonType === "comparison" && b.headers && b.rows) return { ...b, type: "comparison_table" };
+    if (lessonType === "comparison" && (b.headers || b.columns) && b.rows) {
+      return { ...b, type: "comparison_table", headers: b.headers || b.columns };
+    }
+  }
+  // comparison: normalizar headers/rows en cualquier caso
+  if (lessonType === "comparison" && (b.type === "comparison_table" || b.type === "table" || b.type === "comparison")) {
+    const headers = Array.isArray(b.headers) ? b.headers : (Array.isArray(b.columns) ? b.columns : null);
+    let rows = Array.isArray(b.rows) ? b.rows : null;
+    if (rows && rows.length && Array.isArray(rows[0])) {
+      // filas como arrays planos -> {label, cells}
+      rows = rows.map((r: any[]) => ({ label: String(r[0] ?? ""), cells: r.slice(1).map((c) => String(c ?? "")) }));
+    } else if (rows) {
+      rows = rows.map((r: any) => {
+        if (r && typeof r === "object" && (r.label || r.cells)) {
+          return { label: String(r.label ?? ""), cells: Array.isArray(r.cells) ? r.cells.map((c: any) => String(c ?? "")) : [] };
+        }
+        if (r && typeof r === "object") {
+          // {col1: x, col2: y}
+          const vals = Object.values(r).map((v) => String(v ?? ""));
+          return { label: vals[0] || "", cells: vals.slice(1) };
+        }
+        return r;
+      });
+    }
+    return { ...b, type: "comparison_table", headers, rows };
   }
   // reading: bloques sin type pero con text → paragraph
   if (lessonType === "reading" && !b.type && typeof b.text === "string") return { ...b, type: "paragraph" };
