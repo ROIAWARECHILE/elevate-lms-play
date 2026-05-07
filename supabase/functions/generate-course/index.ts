@@ -57,7 +57,7 @@ async function deleteDraftCourseTree(supabase: any, courseId: string) {
 
 // ---------- AI helpers ----------
 
-function getAiConfig() {
+function getAiConfig(opts: { fast?: boolean } = {}) {
   const API_KEY = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("OPENAI_API_KEY");
   if (!API_KEY) throw new Error("LOVABLE_API_KEY not configured");
   const useLovable = !!Deno.env.get("LOVABLE_API_KEY");
@@ -66,19 +66,20 @@ function getAiConfig() {
     url: useLovable
       ? "https://ai.gateway.lovable.dev/v1/chat/completions"
       : "https://api.openai.com/v1/chat/completions",
-    // Pro mantiene mejor calidad para multimodal (PDFs/imágenes); seguimos con él
-    // porque la extracción se basa en visión. Materialización podría usar Flash, pero
-    // mantenemos un solo modelo para simplificar.
-    model: useLovable ? "google/gemini-2.5-pro" : "gpt-4o",
+    // Flash para tareas con texto ya estructurado (LlamaParse markdown);
+    // Pro para extracción multimodal cuando el contenido viene como imagen/PDF.
+    model: useLovable
+      ? (opts.fast ? "google/gemini-2.5-flash" : "google/gemini-2.5-pro")
+      : "gpt-4o",
   };
 }
 
 async function callAi(
   messages: any[],
   tool: any,
-  opts: { temperature?: number; maxTokens?: number; retries?: number } = {},
+  opts: { temperature?: number; maxTokens?: number; retries?: number; fast?: boolean } = {},
 ) {
-  const { apiKey, url, model } = getAiConfig();
+  const { apiKey, url, model } = getAiConfig({ fast: opts.fast });
   const maxRetries = opts.retries ?? 2;
   let lastErr: Error | null = null;
 
@@ -299,8 +300,15 @@ function buildContentParts(sources: any[], textInstructions: string) {
 
 // ---------- Pipeline steps ----------
 
+function sourcesAreAllText(sources: any[]) {
+  return Array.isArray(sources) && sources.length > 0
+    && sources.every((s) => s.kind === "text" || s.kind === "url" || s.kind === "excel");
+}
+
 async function stepExtract(sources: any[], userNotes: string) {
+  const allText = sourcesAreAllText(sources);
   const text = `Analiza TODAS las fuentes adjuntas y produce un knowledge brief estructurado en español.
+${allText ? "El material ya viene como markdown estructurado (parseado con LlamaParse). Aprovecha tablas, listas y headings que ya están presentes." : ""}
 Incluye: tema central, resumen de 5-10 frases, conceptos clave (con definiciones y ejemplo),
 hechos relevantes, procedimientos paso-a-paso si los detectas, comparaciones si aplican.
 Si una sección está ausente del material, devuélvela vacía en vez de inventar.
@@ -309,6 +317,7 @@ Llama a build_knowledge_brief con los resultados.`;
   return await callAi([{ role: "user", content: buildContentParts(sources, text) }], EXTRACT_TOOL, {
     temperature: 0.4,
     maxTokens: 8000,
+    fast: allText,
   });
 }
 
@@ -447,7 +456,31 @@ function coerceBlock(lessonType: string, b: any): any {
     if (lessonType === "steps" && b.title && b.description) return { ...b, type: "step" };
     if (lessonType === "sop_walkthrough" && b.title && b.description) return { ...b, type: "sop_step" };
     if (lessonType === "video_embed" && b.url) return { ...b, type: "video" };
-    if (lessonType === "comparison" && b.headers && b.rows) return { ...b, type: "comparison_table" };
+    if (lessonType === "comparison" && (b.headers || b.columns) && b.rows) {
+      return { ...b, type: "comparison_table", headers: b.headers || b.columns };
+    }
+  }
+  // comparison: normalizar headers/rows en cualquier caso
+  if (lessonType === "comparison" && (b.type === "comparison_table" || b.type === "table" || b.type === "comparison")) {
+    const headers = Array.isArray(b.headers) ? b.headers : (Array.isArray(b.columns) ? b.columns : null);
+    let rows = Array.isArray(b.rows) ? b.rows : null;
+    if (rows && rows.length && Array.isArray(rows[0])) {
+      // filas como arrays planos -> {label, cells}
+      rows = rows.map((r: any[]) => ({ label: String(r[0] ?? ""), cells: r.slice(1).map((c) => String(c ?? "")) }));
+    } else if (rows) {
+      rows = rows.map((r: any) => {
+        if (r && typeof r === "object" && (r.label || r.cells)) {
+          return { label: String(r.label ?? ""), cells: Array.isArray(r.cells) ? r.cells.map((c: any) => String(c ?? "")) : [] };
+        }
+        if (r && typeof r === "object") {
+          // {col1: x, col2: y}
+          const vals = Object.values(r).map((v) => String(v ?? ""));
+          return { label: vals[0] || "", cells: vals.slice(1) };
+        }
+        return r;
+      });
+    }
+    return { ...b, type: "comparison_table", headers, rows };
   }
   // reading: bloques sin type pero con text → paragraph
   if (lessonType === "reading" && !b.type && typeof b.text === "string") return { ...b, type: "paragraph" };
@@ -610,17 +643,19 @@ Deno.serve(async (req) => {
       if (!mod) throw new Error("Module index out of range");
       const lesson = mod.lessons?.[lessonIndex];
       if (!lesson) throw new Error("Lesson index out of range");
-      try {
-        const { blocks, repaired } = await stepMaterializeLesson(brief, mod.title, lesson);
+      const tryInsert = async (lessonObj: any) => {
+        const { blocks, repaired, fallback } = await stepMaterializeLesson(brief, mod.title, lessonObj);
         await supabase.from("lessons").insert({
           module_id: moduleId,
-          title: lesson.title,
-          lesson_type: lesson.lesson_type || "reading",
+          title: lessonObj.title,
+          lesson_type: lessonObj.lesson_type || "reading",
           content: {
             blocks,
             validation: {
               status: "valid",
               repaired,
+              fallback: !!fallback,
+              degraded_from: lessonObj._degraded_from || null,
               block_count: blocks.length,
               validated_at: new Date().toISOString(),
             },
@@ -629,10 +664,23 @@ Deno.serve(async (req) => {
           sort_order: typeof sortOrder === "number" ? sortOrder : lessonIndex,
           xp_reward: 10,
         });
-        return json({ ok: true, inserted: 1, blocks: blocks.length, repaired });
+        return { ok: true, inserted: 1, blocks: blocks.length, repaired, fallback: !!fallback };
+      };
+      try {
+        return json(await tryInsert(lesson));
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        console.error("Lesson materialize failed:", lesson.title, message);
+        console.warn("Lesson failed, degrading to reading:", lesson.title, message);
+        // Degradación: reintentar como "reading" antes de rendirse
+        if (lesson.lesson_type !== "reading") {
+          try {
+            return json(await tryInsert({ ...lesson, lesson_type: "reading", _degraded_from: lesson.lesson_type }));
+          } catch (e2) {
+            const m2 = e2 instanceof Error ? e2.message : String(e2);
+            console.error("Reading fallback also failed:", lesson.title, m2);
+            return json({ error: `No se pudo generar la lección "${lesson.title}": ${m2}` }, 422);
+          }
+        }
         return json({ error: `No se pudo generar la lección "${lesson.title}": ${message}` }, 422);
       }
     }
