@@ -300,8 +300,15 @@ function buildContentParts(sources: any[], textInstructions: string) {
 
 // ---------- Pipeline steps ----------
 
+function sourcesAreAllText(sources: any[]) {
+  return Array.isArray(sources) && sources.length > 0
+    && sources.every((s) => s.kind === "text" || s.kind === "url" || s.kind === "excel");
+}
+
 async function stepExtract(sources: any[], userNotes: string) {
+  const allText = sourcesAreAllText(sources);
   const text = `Analiza TODAS las fuentes adjuntas y produce un knowledge brief estructurado en español.
+${allText ? "El material ya viene como markdown estructurado (parseado con LlamaParse). Aprovecha tablas, listas y headings que ya están presentes." : ""}
 Incluye: tema central, resumen de 5-10 frases, conceptos clave (con definiciones y ejemplo),
 hechos relevantes, procedimientos paso-a-paso si los detectas, comparaciones si aplican.
 Si una sección está ausente del material, devuélvela vacía en vez de inventar.
@@ -310,6 +317,7 @@ Llama a build_knowledge_brief con los resultados.`;
   return await callAi([{ role: "user", content: buildContentParts(sources, text) }], EXTRACT_TOOL, {
     temperature: 0.4,
     maxTokens: 8000,
+    fast: allText,
   });
 }
 
