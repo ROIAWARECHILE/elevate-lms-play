@@ -1,205 +1,166 @@
-## Diagnóstico detallado
+## Objetivo
 
-Course Studio sigue fallando porque el flujo actual mejoró algunos síntomas, pero la arquitectura todavía permite que contenido incompleto llegue a producción o quede oculto tras mensajes de “curso creado”. Hay tres problemas principales:
+Integrar **LlamaParse** como motor de parseo profesional para PDFs, imágenes y documentos en Course Studio, reemplazando la "extracción por visión" actual que está fallando con catálogos, tablas y documentos densos.
 
-1. **La validación vive solo dentro de `generate-course` y no es compartida**
-   - `generate-course` ya tiene sanitización para `materialize_lesson`, pero `regenerate-lesson`, `GenerateCourse` legacy, edición manual y publicación no usan la misma validación.
-   - La base de datos ya tiene cursos con `content.blocks` como `[{}]`, `[{}, {}]` o bloques tipo `paragraph` en lecciones `interactive_quiz`. Eso confirma que hay caminos que guardaron contenido no renderizable.
+## Por qué LlamaParse soluciona el problema
 
-2. **El contrato con la IA sigue siendo demasiado laxo**
-   - El schema de tool calling para lecciones sigue usando `items: { type: "object", additionalProperties: true }`. El prompt pide estructura, pero el contrato técnico no obliga propiedades por tipo.
-   - El outline puede crear lecciones no respaldadas por evidencia suficiente. Además fuerza `interactive_quiz` por módulo aunque el brief sea pobre.
-   - El modelo elegido en el código es `google/gemini-2.5-pro`; la guía actual del proyecto recomienda Lovable AI con `google/gemini-3-flash-preview` por defecto salvo necesidad específica. También conviene dividir extracción, outline y materialización con límites claros.
+Hoy los PDFs se mandan en base64 al modelo y se le pide que "interprete". Eso falla con:
 
-3. **La finalización no es una auditoría real de calidad**
-   - `materialize_finalize` solo cuenta módulos y lecciones; no verifica si cada lección renderiza según su `lesson_type` ni si los quizzes tienen preguntas válidas suficientes.
-   - `AdminCourses` permite publicar cualquier borrador, incluso con lecciones rotas.
-   - `CourseView` y `LessonView` consumen lo que exista; si hay bloques inválidos, el alumno ve “Sin ejercicios”, “Sin conceptos” o lecciones vacías.
+- Catálogos visuales (Smartpools, jacuzzis, etc.)
+- Tablas y comparativas
+- PDFs escaneados o con diseño complejo
+- Documentos largos donde el modelo trunca
 
-Hallazgo adicional importante: `src/pages/admin/GenerateCourse.tsx` todavía llama `generate-course` sin `mode`, activando el flujo legacy single-shot. Ese camino inserta bloques de lectura sin la validación nueva y puede volver a crear cursos de baja calidad.
+LlamaParse devuelve **markdown estructurado** por página, con tablas reales, listas, headings, y permite OCR en escaneados. Eso da:
+
+- Brief mucho más rico (más conceptos, hechos, comparativas).
+- Outline más realista (la IA ya no "inventa" tablas vacías).
+- Lecciones tipo `comparison`, `steps` y `case_study` con datos reales que pasan validación.
 
 ## Arquitectura propuesta
 
-Cambiar el sistema de “generar e insertar” a “generar, validar, auditar y recién entonces habilitar”.
-
 ```text
-Fuentes
-  -> Extractor: brief normalizado + score de suficiencia
-  -> Planner: outline con evidencia por lección
-  -> Materializer: una lección por llamada
-       -> schema estricto por tipo
-       -> sanitize + validate compartido
-       -> repair 1 vez
-       -> insert solo si pasa
-  -> Quiz generator por módulo
-       -> validar preguntas
-  -> Quality audit final
-       -> si pasa: curso draft listo para revisar/publicar
-       -> si falla: draft requiere revisión o se limpia
+PDF / imagen / docx / xlsx
+     |
+     v
+[ Edge Function: parse-source ]  --->  LlamaParse API
+     |                                    |
+     |  markdown + metadata por página    |
+     v
+[ Course Studio cliente ]
+     |
+     |  agrega "fuente parseada" como text/markdown
+     v
+[ generate-course ]
+     |
+     |  Usa el markdown estructurado en vez de PDF crudo
+     v
+brief mejor -> outline mejor -> lecciones válidas
 ```
 
-## Plan de implementación
+## Cambios concretos
 
-### 1. Crear un validador único de contenido de curso
+### 1. Secret y configuración
 
-Añadir un módulo compartible para Edge Functions y frontend, o duplicar de forma controlada en `supabase/functions/_shared/course-quality.ts` y `src/lib/courseQuality.ts` si el entorno no permite importar directamente entre ambos.
+- Pedir al usuario su `LLAMAPARSE_API_KEY` y guardarla como secret en Supabase.
+- Verificar disponibilidad en runtime con `Deno.env.get("LLAMAPARSE_API_KEY")`.
 
-Debe exponer:
+### 2. Nueva Edge Function `parse-source`
 
-- `sanitizeBlocksForLessonType(lessonType, blocks)`
-- `validateLessonContent(lessonType, content)`
-- `validateQuizQuestions(questions)`
-- `auditCourseStructure(course, modules, lessons, quizzes, questions)`
-- `getRenderableBlockCount(lesson)`
-- `getQualityStatus(...)`
+Archivo: `supabase/functions/parse-source/index.ts`
 
-Reglas mínimas:
+Funciones:
 
-- `reading`: mínimo 2 bloques con texto real, no solo `divider`.
-- `concept`: mínimo 2 `term` con `term` y `definition`.
-- `flashcards`: mínimo 3 tarjetas completas.
-- `steps`: mínimo 3 pasos completos y numerados.
-- `comparison`: 1 tabla con mínimo 2 headers útiles y 2 filas consistentes.
-- `case_study`: 1 escenario + 1 pregunta/reflexión.
-- `interactive_quiz`: mínimo 4 ejercicios válidos; `mc` con 3+ opciones y `correct` exacto; `true_false` boolean; `match_pairs` con 3 pares; `order_steps` con 3 pasos; etc.
-- `sop_walkthrough`: mínimo 3 pasos.
+- Recibe `{ kind, name, payload (base64) }` para PDF/imagen/excel/docx.
+- Llama a LlamaParse:
+  - `POST https://api.cloud.llamaindex.ai/api/v1/parsing/upload` con el archivo.
+  - Polling a `GET /api/v1/parsing/job/{id}` hasta `SUCCESS`.
+  - `GET /api/v1/parsing/job/{id}/result/markdown` para obtener el markdown final.
+- Configura modo de parseo:
+  - `result_type=markdown`
+  - `parsing_instruction` orientada a LMS: "extrae todas las tablas, listas, especificaciones técnicas, comparativas y procedimientos. Mantén estructura y headings."
+  - OCR habilitado para escaneados.
+  - Idioma: español.
+- Devuelve:
+  ```json
+  {
+    "markdown": "...",
+    "pages": 12,
+    "job_id": "...",
+    "warnings": []
+  }
+  ```
+- Manejo de errores:
+  - Timeout (max 90s) con respuesta clara.
+  - 401 -> "API key inválida".
+  - 402/429 -> mensaje accionable al admin.
+  - Tope de tamaño (15MB) y validación de tipos.
 
-Resultado esperado: ningún flujo podrá considerar “válida” una lección con `[{}]` o con bloques incompatibles con su tipo.
+### 3. Course Studio: usar parse-source antes de extraer
 
-### 2. Endurecer `generate-course` con contratos estrictos por modo
+`src/pages/admin/CourseStudio.tsx`:
 
-En `supabase/functions/generate-course/index.ts`:
+- Al subir PDF/imagen/docx:
+  1. Mostrar estado "Parseando con LlamaParse...".
+  2. Llamar `supabase.functions.invoke("parse-source", ...)`.
+  3. Guardar la fuente como `kind: "text"` con el markdown devuelto, conservando `metadata.original_kind = "pdf"` para trazabilidad.
+- Excel sigue usando `xlsx` local (más rápido, ya funciona).
+- URL sigue usando `fetch-source`.
+- Si LlamaParse falla, fallback al método actual (mandar base64 al modelo) con un warning.
 
-- Cambiar el modelo Lovable AI por defecto a `google/gemini-3-flash-preview`, salvo que se decida mantener Pro solo para PDFs complejos.
-- Reemplazar el schema genérico de `MATERIALIZE_LESSON_TOOL` por schemas discriminados o por una herramienta específica según `lesson_type`.
-- Añadir validación de input del body por `mode` para evitar llamadas parciales o payloads inconsistentes.
-- Mejorar `stepExtract` para devolver un `brief_quality_score` y `insufficient_reason` si el material no alcanza.
-- Mejorar `stepOutline` para que cada lección incluya evidencia mínima:
-  - `evidence_refs` o `source_evidence` con conceptos/hechos/procedimientos usados.
-  - No crear `concept`, `steps`, `comparison`, `case_study` o `interactive_quiz` si no hay evidencia suficiente.
-- Ajustar `interactive_quiz`: no forzarlo siempre como lección; puede quedar como quiz tabular del módulo si el brief no soporta ejercicios ricos.
-- En `materialize_lesson`, guardar también metadatos de validación en `content.validation`, por ejemplo `{ status, block_count, repaired, warnings }`.
+### 4. `generate-course`: optimizar para markdown estructurado
 
-### 3. Convertir `materialize_finalize` en auditoría real
+`supabase/functions/generate-course/index.ts`:
 
-Actualmente solo recalcula XP y duración. Debe:
+- En `buildContentParts`, ya no mandar PDFs como `image_url`; el contenido ya viene como texto markdown.
+- En `stepExtract`, nuevo prompt orientado a markdown:
+  - "El material viene como markdown ya parseado. Extrae todas las tablas como `comparisons`, todas las listas numeradas como `procedures`, todas las definiciones como `key_concepts`."
+- En `stepOutline`, aprovechar comparativas reales:
+  - Si hay tablas en el brief, permitir `comparison`.
+  - Si no, prohibirlo y degradar a `reading`.
+- Cambiar default model a `google/gemini-3-flash-preview` (más barato y rápido) ya que el contenido ya está estructurado y no necesita visión.
+- Mantener `gemini-2.5-pro` solo como fallback si parse-source no estuvo disponible.
 
-- Cargar módulos, lecciones, quizzes y preguntas del curso.
-- Ejecutar `auditCourseStructure`.
-- Detectar:
-  - módulos sin lecciones renderizables;
-  - lecciones con bloques vacíos/incompatibles;
-  - quizzes con menos de 3 preguntas válidas;
-  - cursos con menos de 1 módulo útil;
-  - módulos con menos de 2 lecciones útiles y sin quiz válido.
-- Si falla:
-  - devolver `{ ok: false, qualityStatus: "failed", report }`;
-  - no navegar como éxito;
-  - opcionalmente borrar el draft si quedó irrecuperable.
-- Si pasa con advertencias:
-  - devolver `{ ok: true, qualityStatus: "needs_review", report }`;
-  - mantenerlo en draft y mostrar advertencias accionables.
-- Si pasa limpio:
-  - devolver `{ ok: true, qualityStatus: "ready", report }`.
+### 5. Robustecer materialización (parche del error actual)
 
-Importante: no publicar automáticamente. El curso debe quedar en draft listo para revisión.
+Independiente de LlamaParse, añadir en `stepMaterializeLesson`:
 
-### 4. Bloquear publicación de cursos dañados
+- Coerción para `comparison`:
+  - `type: "comparison"` con `headers` y `rows` -> `comparison_table`.
+  - Filas como arrays planos -> `{ label, cells }`.
+  - Aceptar también `columns` en lugar de `headers`.
+- Fallback determinístico para `comparison`:
+  - Si el título contiene "vs" o "comparativa", construir tabla mínima desde la evidencia.
+  - Si no hay datos suficientes, **degradar la lección a `reading**` en vez de fallar.
+- Frontend `CourseStudio.tsx`: si una lección falla, no abortar todo el curso. Reintentar como `reading`, y si aún falla, omitir solo esa lección y continuar.
 
-En `AdminCourses.tsx` y/o con una función RPC segura:
+### 6. Persistir trazabilidad
 
-- Antes de pasar de `draft` a `published`, auditar el curso.
-- Si hay lecciones rotas o módulos vacíos, mostrar un error claro y no publicar.
-- Recomendado: crear una RPC `publish_course_if_valid(_course_id uuid)` con `SECURITY DEFINER` que verifique admin + company + calidad. Así la regla no depende solo del cliente.
+En `course_sources.metadata` guardar:
 
-Si no queremos migración de DB en la primera fase, se puede hacer validación desde frontend antes del update, pero la solución robusta es RPC.
+```json
+{
+  "parser": "llamaparse",
+  "job_id": "...",
+  "pages": 12,
+  "parsed_at": "..."
+}
+```
 
-### 5. Eliminar o redirigir el flujo legacy
+Para auditoría futura.
 
-En `src/App.tsx` y `src/pages/admin/GenerateCourse.tsx`:
+### 7. UI: feedback claro al admin
 
-- Redirigir `/app/admin/courses/generate` a `/app/admin/courses/studio`, o transformar `GenerateCourse` en wrapper que use el pipeline nuevo.
-- En `generate-course`, desactivar el fallback sin `mode` o hacer que internamente llame al pipeline moderno.
-- Mantener solo compatibilidad segura: si llega una llamada legacy, devolver error accionable o procesarla con validación estricta, nunca con inserts directos sin auditoría.
+En el paso "Fuentes":
 
-### 6. Reforzar `regenerate-lesson`
+- Spinner por archivo "Parseando con LlamaParse..."
+- Badge verde "Parseado: 12 páginas, 8 tablas detectadas"
+- Si falló parseo: badge ámbar "Usando modo visión (sin LlamaParse)"
 
-En `supabase/functions/regenerate-lesson/index.ts`:
+## Archivos a crear / modificar
 
-- Usar el mismo sanitizador/validador que `generate-course`.
-- Añadir reparación automática si la primera generación no pasa.
-- Bloquear guardado si el resultado no es renderizable.
-- Aceptar instrucciones de reparación específicas para lecciones dañadas.
-- Incluir `sop_walkthrough` en tipos soportados, porque Course Studio lo usa pero `regenerate-lesson` aún no lo lista.
+- **Crear**: `supabase/functions/parse-source/index.ts`
+- **Modificar**: `supabase/functions/generate-course/index.ts`
+- **Modificar**: `src/pages/admin/CourseStudio.tsx`
+- **Secret**: `LLAMAPARSE_API_KEY`
 
-### 7. Mejorar la UI de Course Studio durante generación
+## Plan de ejecución (orden)
 
-En `CourseStudio.tsx`:
+1. Pedir y configurar `LLAMAPARSE_API_KEY` como secret.
+2. Crear `parse-source` Edge Function con LlamaParse.
+3. Integrar en CourseStudio (parsing antes de extract).
+4. Adaptar `generate-course` para input markdown.
+5. Aplicar parche de `comparison` + tolerancia a fallos en frontend.
+6. Probar con el caso "Smartpools" de las capturas.
 
-- Mantener estado por lección, no solo por módulo:
-  - `pending`, `generating`, `valid`, `repairing`, `skipped`, `failed`.
-- Mostrar número de bloques válidos y razón si se omite.
-- Guardar un `generationReport` con errores por módulo/lección.
-- Después de finalizar:
-  - si `qualityStatus = failed`, no navegar a EditCourse como éxito;
-  - si `needs_review`, navegar a edición pero con banner “requiere revisión” y lista de reparaciones;
-  - si `ready`, mostrar éxito normal.
-- Añadir acción “Reintentar lecciones fallidas” que llame `regenerate-lesson` o un nuevo modo `repair_course_lessons`.
+## Resultado esperado
 
-### 8. Reparar datos existentes
+- Catálogos y PDFs complejos se convierten en markdown limpio antes de tocar la IA.
+- Las comparativas reales se generan como tablas válidas.
+- Las lecciones avanzadas dejan de fallar por formato.
+- Una lección con problemas no destruye todo el curso.
+- El error actual `0 bloques válidos para tipo comparison` desaparece.
 
-Crear una acción de mantenimiento para cursos ya dañados, especialmente “Politica de seguridad de Fabrica SMART BUILDING”.
-
-Opciones:
-
-- Edge Function `repair-course`:
-  - audita el curso;
-  - regenera lecciones dañadas con `regenerate-lesson` reforzado;
-  - elimina módulos irrecuperables;
-  - devuelve reporte.
-- O botón en EditCourse: “Auditar y reparar curso”.
-
-También conviene marcar cursos dañados como `draft` hasta que pasen auditoría. Para esto se puede usar `source_brief.generation_quality` sin cambiar schema, o una migración opcional con campos dedicados.
-
-### 9. Pruebas y validación
-
-Añadir tests de Deno para funciones Edge:
-
-- Sanitizador rechaza `[{}]` para todos los tipos.
-- `interactive_quiz` rechaza `paragraph` y acepta 4 ejercicios reales.
-- `case_study` requiere escenario + pregunta/reflexión.
-- `materialize_finalize` falla con curso vacío o lecciones incompatibles.
-- `regenerate-lesson` no guarda salida inválida.
-
-Validación manual posterior:
-
-- Generar de nuevo el curso de seguridad industrial.
-- Consultar DB y confirmar:
-  - cero `content.blocks @> '[{}]'`;
-  - cero `interactive_quiz` con bloques no interactivos;
-  - todos los módulos tienen lecciones renderizables o fueron eliminados;
-  - ningún curso dañado puede publicarse.
-
-## Archivos principales a tocar
-
-- `supabase/functions/generate-course/index.ts`
-- `supabase/functions/regenerate-lesson/index.ts`
-- `src/pages/admin/CourseStudio.tsx`
-- `src/pages/admin/GenerateCourse.tsx`
-- `src/App.tsx`
-- `src/pages/admin/AdminCourses.tsx`
-- `src/pages/admin/EditCourse.tsx`
-- `src/lib/courseQuality.ts` nuevo
-- `supabase/functions/_shared/course-quality.ts` nuevo
-- Migración SQL opcional para `publish_course_if_valid` y/o metadatos de calidad
-
-## Prioridad recomendada
-
-1. Bloquear nuevas creaciones rotas: validador compartido + legacy desactivado.
-2. Auditoría final real en `materialize_finalize`.
-3. Bloquear publicación de cursos dañados.
-4. Reforzar regeneración/reparación.
-5. Mejorar UI granular.
-6. Reparar cursos existentes.
-
-Con esto Course Studio deja de depender de “que la IA se porte bien” y pasa a tener una capa determinista de calidad: si el contenido no es renderizable, no se guarda, no se publica y se informa exactamente qué falló.
+LlamaParse docs  
+  
+En el ultimo paso del CORE studio donde se generan los cursos, hay un error de non status edge fuction, seguramente hay algun time-out o se satura de llamadas a API, corrige ese error para que se puedan generar bien los cursos sin ningun error, si es necesario separa en varias capas la generacion
