@@ -470,14 +470,16 @@ export default function CourseStudio() {
           });
           if (lessonRes.error || lessonRes.data?.error) {
             const reason = lessonRes.data?.error || lessonRes.error?.message || "error desconocido";
-            console.error("Lesson failed:", mi, li, reason);
-            throw new Error(`Se detuvo la generación para evitar contenido vacío. ${lessons[li].title}: ${reason}`);
+            console.warn("Lesson failed (skip):", mi, li, reason);
+            failures.push({ module: mod.title, lesson: lessons[li].title, reason });
+            moduleSkipped += 1;
           } else {
             const d = lessonRes.data || {};
             if (d.inserted) {
               moduleInserted += 1;
             } else {
-              throw new Error(`Se detuvo la generación para evitar contenido vacío. ${lessons[li].title}: ${d.reason || "no se generaron bloques válidos"}`);
+              failures.push({ module: mod.title, lesson: lessons[li].title, reason: d.reason || "sin bloques válidos" });
+              moduleSkipped += 1;
             }
           }
         }
@@ -486,25 +488,32 @@ export default function CourseStudio() {
 
         // 2b) Quiz for the module (or delete shell if no lessons survived).
         setProgressMsg(`Módulo ${mi + 1}/${totalModules}: generando evaluación…`);
-        const quizRes = await supabase.functions.invoke("generate-course", {
-          body: {
-            mode: "materialize_module_quiz",
-            companyId: profile.company_id,
-            userId: user.id,
-            brief,
-            outline,
-            moduleId,
-            moduleIndex: mi,
-          },
-        });
-        if (quizRes.error || quizRes.data?.error) {
-          throw new Error(quizRes.data?.error || quizRes.error?.message || "No se pudo generar la evaluación del módulo");
+        let qd: any = {};
+        try {
+          const quizRes = await supabase.functions.invoke("generate-course", {
+            body: {
+              mode: "materialize_module_quiz",
+              companyId: profile.company_id,
+              userId: user.id,
+              brief,
+              outline,
+              moduleId,
+              moduleIndex: mi,
+            },
+          });
+          if (quizRes.error || quizRes.data?.error) {
+            console.warn("Quiz failed (skip):", quizRes.data?.error || quizRes.error?.message);
+          } else {
+            qd = quizRes.data || {};
+          }
+        } catch (e: any) {
+          console.warn("Quiz exception:", e?.message);
         }
-        const qd = quizRes.data || {};
         totalInserted += moduleInserted;
         totalSkipped += moduleSkipped;
         if (qd.deleted || moduleInserted === 0) {
-          throw new Error(`Se detuvo la generación porque el módulo "${mod.title}" quedó sin lecciones válidas.`);
+          deletedModules += 1;
+          setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "deleted" : s)));
         } else {
           okModules += 1;
           setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "done" : s)));
