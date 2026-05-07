@@ -77,9 +77,9 @@ function getAiConfig(opts: { fast?: boolean } = {}) {
 async function callAi(
   messages: any[],
   tool: any,
-  opts: { temperature?: number; maxTokens?: number; retries?: number } = {},
+  opts: { temperature?: number; maxTokens?: number; retries?: number; fast?: boolean } = {},
 ) {
-  const { apiKey, url, model } = getAiConfig();
+  const { apiKey, url, model } = getAiConfig({ fast: opts.fast });
   const maxRetries = opts.retries ?? 2;
   let lastErr: Error | null = null;
 
