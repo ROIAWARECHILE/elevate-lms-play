@@ -100,7 +100,17 @@ async function callAi(
       });
       if (!res.ok) {
         const body = await res.text();
-        if (res.status === 429 || res.status >= 500) {
+        if (res.status === 402) {
+          throw new Error(
+            "AI_CREDITS_EXHAUSTED: Tu workspace de Lovable se quedó sin créditos de IA. Recarga saldo en Settings → Workspace → Cloud & AI balance para continuar generando cursos.",
+          );
+        }
+        if (res.status === 429) {
+          throw new Error(
+            "AI_RATE_LIMITED: Demasiadas solicitudes a la IA. Espera un momento y vuelve a intentarlo.",
+          );
+        }
+        if (res.status >= 500) {
           lastErr = new Error(`AI error (${res.status}): ${body.slice(0, 200)}`);
           await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           continue;
