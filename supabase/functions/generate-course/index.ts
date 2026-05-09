@@ -60,12 +60,13 @@ async function deleteDraftCourseTree(supabase: any, courseId: string) {
 function getAiConfig(opts: { fast?: boolean } = {}) {
   const API_KEY = Deno.env.get("GEMINI_API_KEY");
   if (!API_KEY) throw new Error("GEMINI_API_KEY not configured");
+  const defaultModel = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
   return {
     apiKey: API_KEY,
     // Endpoint OpenAI-compatible de Google Gemini
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    // Flash para texto ya estructurado (markdown LlamaParse); Pro para multimodal complejo.
-    model: opts.fast ? "gemini-2.5-flash" : "gemini-2.5-pro",
+    // Flash por defecto para evitar 429 frecuentes del tier gratuito; GEMINI_MODEL permite subir a Pro si hay cuota.
+    model: opts.fast ? "gemini-2.5-flash" : defaultModel,
   };
 }
 
@@ -373,6 +374,7 @@ REGLAS PEDAGÓGICAS:
   return await callAi([{ role: "user", content: [{ type: "text", text }] }], OUTLINE_TOOL, {
     temperature: 0.4,
     maxTokens: 8000,
+    fast: true,
   });
 }
 
@@ -436,7 +438,7 @@ Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real.`;
     const result = await callAi(
       [{ role: "user", content: [{ type: "text", text }] }],
       MATERIALIZE_LESSON_TOOL,
-      { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000 },
+      { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, fast: true },
     );
     const raw = Array.isArray(result?.blocks) ? result.blocks : [];
     const coerced = raw.map((b: any) => coerceBlock(lesson.lesson_type, b));
@@ -547,6 +549,7 @@ Lecciones del módulo: ${lessons.map((l) => `"${l.title}"`).join(", ")}
   const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_QUIZ_TOOL, {
     temperature: 0.5,
     maxTokens: 4000,
+    fast: true,
   });
   return Array.isArray(result?.questions) ? result.questions : [];
 }
