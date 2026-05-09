@@ -408,6 +408,7 @@ export default function CourseStudio() {
     setModuleStatuses(Array(totalModules).fill("pending") as ModuleStatus[]);
     setGenProgress(0);
     setProgressMsg(`Creando estructura del curso…`);
+    const pauseForAiQuota = () => new Promise((resolve) => setTimeout(resolve, 7000));
 
     let courseId: string | null = null;
     try {
@@ -482,11 +483,17 @@ export default function CourseStudio() {
               moduleSkipped += 1;
             }
           }
+          if (!cancelRef.current && (li < lessons.length - 1 || mi < totalModules - 1)) {
+            setProgressMsg(`Pausando unos segundos para respetar la cuota de IA…`);
+            await pauseForAiQuota();
+          }
         }
 
         if (cancelRef.current) break;
 
         // 2b) Quiz for the module (or delete shell if no lessons survived).
+        setProgressMsg(`Pausando unos segundos antes de generar la evaluación…`);
+        await pauseForAiQuota();
         setProgressMsg(`Módulo ${mi + 1}/${totalModules}: generando evaluación…`);
         let qd: any = {};
         try {
