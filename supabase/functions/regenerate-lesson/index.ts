@@ -74,9 +74,9 @@ async function callAi(messages: any[], opts: { temperature?: number } = {}) {
   });
   if (!res.ok) {
     const t = await res.text();
-    if (res.status === 429) throw new Error("Rate limit excedido. Intenta en un minuto.");
-    if (res.status === 402) throw new Error("Sin créditos en Lovable AI. Recarga en Settings.");
-    throw new Error(`AI error ${res.status}: ${t.slice(0, 300)}`);
+    if (res.status === 429) throw new Error("Rate limit excedido en Gemini. Intenta en un minuto.");
+    if (res.status === 401 || res.status === 403) throw new Error("GEMINI_API_KEY inválida.");
+    throw new Error(`Gemini error ${res.status}: ${t.slice(0, 300)}`);
   }
   const data = await res.json();
   const tc = data.choices?.[0]?.message?.tool_calls?.[0];
