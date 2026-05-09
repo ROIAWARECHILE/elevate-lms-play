@@ -22,15 +22,12 @@ const LESSON_TYPES = [
 ] as const;
 
 function getAi() {
-  const key = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("OPENAI_API_KEY");
-  if (!key) throw new Error("No AI API key configured");
-  const useLov = !!Deno.env.get("LOVABLE_API_KEY");
+  const key = Deno.env.get("GEMINI_API_KEY");
+  if (!key) throw new Error("GEMINI_API_KEY not configured");
   return {
     apiKey: key,
-    url: useLov
-      ? "https://ai.gateway.lovable.dev/v1/chat/completions"
-      : "https://api.openai.com/v1/chat/completions",
-    model: useLov ? "google/gemini-2.5-pro" : "gpt-4o",
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    model: "gemini-2.5-pro",
   };
 }
 
