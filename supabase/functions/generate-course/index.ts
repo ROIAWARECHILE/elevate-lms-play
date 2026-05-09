@@ -445,7 +445,7 @@ Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real.`;
       result = await callAi(
         [{ role: "user", content: [{ type: "text", text }] }],
         MATERIALIZE_LESSON_TOOL,
-        { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, fast: true },
+        { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, retries: 0, fast: true },
       );
     } catch (error) {
       if (!isAiRateLimited(error)) throw error;
@@ -727,10 +727,10 @@ Deno.serve(async (req) => {
           } catch (e2) {
             const m2 = e2 instanceof Error ? e2.message : String(e2);
             console.error("Reading fallback also failed:", lesson.title, m2);
-            return json({ error: `No se pudo generar la lección "${lesson.title}": ${m2}` }, 422);
+            return json({ ok: false, inserted: 0, reason: `No se pudo generar la lección "${lesson.title}": ${m2}` });
           }
         }
-        return json({ error: `No se pudo generar la lección "${lesson.title}": ${message}` }, 422);
+        return json({ ok: false, inserted: 0, reason: `No se pudo generar la lección "${lesson.title}": ${message}` });
       }
     }
 
