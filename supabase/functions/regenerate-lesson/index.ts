@@ -62,26 +62,36 @@ const HINTS: Record<string, string> = {
 
 async function callAi(messages: any[], opts: { temperature?: number } = {}) {
   const { apiKey, url, model } = getAi();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model, messages, tools: [TOOL],
-      tool_choice: { type: "function", function: { name: "build_lesson" } },
-      temperature: opts.temperature ?? 0.55,
-      max_tokens: 6000,
-    }),
-  });
-  if (!res.ok) {
+  const maxRetries = 2;
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model, messages, tools: [TOOL],
+        tool_choice: { type: "function", function: { name: "build_lesson" } },
+        temperature: opts.temperature ?? 0.55,
+        max_tokens: 6000,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const tc = data.choices?.[0]?.message?.tool_calls?.[0];
+      if (!tc) throw new Error("AI sin respuesta estructurada");
+      return JSON.parse(tc.function.arguments);
+    }
     const t = await res.text();
-    if (res.status === 429) throw new Error("Rate limit excedido en Gemini. Intenta en un minuto.");
+    if (res.status === 429 && attempt < maxRetries) {
+      lastErr = new Error("rate limited");
+      await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
+      continue;
+    }
+    if (res.status === 429) throw new Error("Rate limit excedido en Gemini. Espera ~1 minuto y reintenta, o usa una API key con plan de pago.");
     if (res.status === 401 || res.status === 403) throw new Error("GEMINI_API_KEY inválida.");
     throw new Error(`Gemini error ${res.status}: ${t.slice(0, 300)}`);
   }
-  const data = await res.json();
-  const tc = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!tc) throw new Error("AI sin respuesta estructurada");
-  return JSON.parse(tc.function.arguments);
+  throw lastErr || new Error("AI call failed");
 }
 
 function getServiceClient() {

@@ -101,8 +101,14 @@ async function callAi(
           );
         }
         if (res.status === 429) {
+          if (attempt < maxRetries) {
+            lastErr = new Error("AI_RATE_LIMITED");
+            // Backoff largo: free tier de Gemini tiene RPM muy bajo
+            await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
+            continue;
+          }
           throw new Error(
-            "AI_RATE_LIMITED: Demasiadas solicitudes a Gemini. Espera un momento y vuelve a intentarlo.",
+            "AI_RATE_LIMITED: Demasiadas solicitudes a Gemini. Espera ~1 minuto y vuelve a intentarlo, o usa una API key con plan de pago.",
           );
         }
         if (res.status >= 500) {
