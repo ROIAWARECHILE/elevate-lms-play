@@ -140,6 +140,11 @@ async function callAi(
   throw lastErr || new Error("AI call failed");
 }
 
+function isAiRateLimited(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("AI_RATE_LIMITED") || message.includes("429") || message.includes("Rate limit");
+}
+
 // ---------- Tool schemas ----------
 
 const EXTRACT_TOOL = {
@@ -435,11 +440,23 @@ Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real.`;
     const text = attempt === 0
       ? baseText
       : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: ${lastReason}. Esta vez SOLO bloques con la forma exacta indicada y al menos ${minBlocks} válidos. NO uses {"type":"${lesson.lesson_type}"} — usa los subtipos exactos del FORMATO REQUERIDO.`;
-    const result = await callAi(
-      [{ role: "user", content: [{ type: "text", text }] }],
-      MATERIALIZE_LESSON_TOOL,
-      { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, fast: true },
-    );
+    let result: any;
+    try {
+      result = await callAi(
+        [{ role: "user", content: [{ type: "text", text }] }],
+        MATERIALIZE_LESSON_TOOL,
+        { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, fast: true },
+      );
+    } catch (error) {
+      if (!isAiRateLimited(error)) throw error;
+      const fb = buildFallbackBlocks(lesson, minBlocks - bestSanitized.length);
+      const merged = [...bestSanitized, ...fb];
+      if (blocksMeetMinimum(lesson.lesson_type, merged)) {
+        console.warn(`Lesson "${lesson.title}" usó fallback local por cuota de IA (${fb.length} bloques)`);
+        return { blocks: merged, repaired: true, raw_count: bestRaw, fallback: true, quota_fallback: true };
+      }
+      throw error;
+    }
     const raw = Array.isArray(result?.blocks) ? result.blocks : [];
     const coerced = raw.map((b: any) => coerceBlock(lesson.lesson_type, b));
     const sanitized = sanitizeBlocksForLessonType(lesson.lesson_type, coerced);
