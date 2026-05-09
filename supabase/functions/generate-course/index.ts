@@ -549,8 +549,26 @@ function buildFallbackBlocks(lesson: any, count: number): any[] {
   } else if (t === "case_study") {
     out.push({ type: "scenario", title, text: objective || evidence[0] || title });
     out.push({ type: "question", text: `¿Cómo aplicarías esto en "${title}"?` });
+  } else if (t === "comparison") {
+    const left = evidence[0] || objective || title;
+    const right = evidence[1] || objective || title;
+    out.push({
+      type: "comparison_table",
+      headers: ["Aspecto", "Aplicación", "Evidencia"],
+      rows: [
+        { label: "Propósito", cells: [objective || title, left] },
+        { label: "Criterio clave", cells: [title, right] },
+      ],
+    });
+  } else if (t === "interactive_quiz") {
+    const answer = evidence[0] || objective || title;
+    out.push(
+      { type: "mc", question: `¿Cuál es el foco principal de "${title}"?`, options: [answer, "Una acción no relacionada", "Un dato administrativo"], correct: answer, explanation: objective || answer },
+      { type: "true_false", question: `"${title}" debe aplicarse con base en evidencia del curso.`, correct: true, explanation: objective || answer },
+      { type: "fill_blank", sentence: `${title} se apoya en ___.`, correct: "evidencia", explanation: answer },
+      { type: "highlight_terms", sentence: `${title} requiere seguimiento, medición y mejora continua.`, terms: ["seguimiento", "medición", "mejora continua"] },
+    );
   } else {
-    // tipos sin fallback seguro
     return [];
   }
   return out;
