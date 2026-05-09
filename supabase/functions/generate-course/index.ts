@@ -95,22 +95,22 @@ async function callAi(
       });
       if (!res.ok) {
         const body = await res.text();
-        if (res.status === 402) {
+        if (res.status === 401 || res.status === 403) {
           throw new Error(
-            "AI_CREDITS_EXHAUSTED: Tu workspace de Lovable se quedó sin créditos de IA. Recarga saldo en Settings → Workspace → Cloud & AI balance para continuar generando cursos.",
+            "GEMINI_AUTH_ERROR: La GEMINI_API_KEY es inválida o no tiene permisos. Verifícala en Google AI Studio.",
           );
         }
         if (res.status === 429) {
           throw new Error(
-            "AI_RATE_LIMITED: Demasiadas solicitudes a la IA. Espera un momento y vuelve a intentarlo.",
+            "AI_RATE_LIMITED: Demasiadas solicitudes a Gemini. Espera un momento y vuelve a intentarlo.",
           );
         }
         if (res.status >= 500) {
-          lastErr = new Error(`AI error (${res.status}): ${body.slice(0, 200)}`);
+          lastErr = new Error(`Gemini error (${res.status}): ${body.slice(0, 200)}`);
           await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           continue;
         }
-        throw new Error(`AI error (${res.status}): ${body.slice(0, 500)}`);
+        throw new Error(`Gemini error (${res.status}): ${body.slice(0, 500)}`);
       }
       const data = await res.json();
       const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
