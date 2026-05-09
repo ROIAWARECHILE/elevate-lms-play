@@ -27,7 +27,7 @@ function getAi() {
   return {
     apiKey: key,
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-2.5-pro",
+    model: Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash",
   };
 }
 
