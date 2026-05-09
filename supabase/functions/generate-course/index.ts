@@ -140,6 +140,11 @@ async function callAi(
   throw lastErr || new Error("AI call failed");
 }
 
+function isAiRateLimited(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("AI_RATE_LIMITED") || message.includes("429") || message.includes("Rate limit");
+}
+
 // ---------- Tool schemas ----------
 
 const EXTRACT_TOOL = {
@@ -435,11 +440,23 @@ Devuelve entre ${Math.max(minBlocks, 4)} y 10 bloques de calidad real.`;
     const text = attempt === 0
       ? baseText
       : baseText + `\n\n⚠ INTENTO PREVIO INVÁLIDO: ${lastReason}. Esta vez SOLO bloques con la forma exacta indicada y al menos ${minBlocks} válidos. NO uses {"type":"${lesson.lesson_type}"} — usa los subtipos exactos del FORMATO REQUERIDO.`;
-    const result = await callAi(
-      [{ role: "user", content: [{ type: "text", text }] }],
-      MATERIALIZE_LESSON_TOOL,
-      { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, fast: true },
-    );
+    let result: any;
+    try {
+      result = await callAi(
+        [{ role: "user", content: [{ type: "text", text }] }],
+        MATERIALIZE_LESSON_TOOL,
+        { temperature: attempt === 0 ? 0.55 : 0.3, maxTokens: 6000, retries: 0, fast: true },
+      );
+    } catch (error) {
+      if (!isAiRateLimited(error)) throw error;
+      const fb = buildFallbackBlocks(lesson, minBlocks - bestSanitized.length);
+      const merged = [...bestSanitized, ...fb];
+      if (blocksMeetMinimum(lesson.lesson_type, merged)) {
+        console.warn(`Lesson "${lesson.title}" usó fallback local por cuota de IA (${fb.length} bloques)`);
+        return { blocks: merged, repaired: true, raw_count: bestRaw, fallback: true, quota_fallback: true };
+      }
+      throw error;
+    }
     const raw = Array.isArray(result?.blocks) ? result.blocks : [];
     const coerced = raw.map((b: any) => coerceBlock(lesson.lesson_type, b));
     const sanitized = sanitizeBlocksForLessonType(lesson.lesson_type, coerced);
@@ -532,8 +549,26 @@ function buildFallbackBlocks(lesson: any, count: number): any[] {
   } else if (t === "case_study") {
     out.push({ type: "scenario", title, text: objective || evidence[0] || title });
     out.push({ type: "question", text: `¿Cómo aplicarías esto en "${title}"?` });
+  } else if (t === "comparison") {
+    const left = evidence[0] || objective || title;
+    const right = evidence[1] || objective || title;
+    out.push({
+      type: "comparison_table",
+      headers: ["Aspecto", "Aplicación", "Evidencia"],
+      rows: [
+        { label: "Propósito", cells: [objective || title, left] },
+        { label: "Criterio clave", cells: [title, right] },
+      ],
+    });
+  } else if (t === "interactive_quiz") {
+    const answer = evidence[0] || objective || title;
+    out.push(
+      { type: "mc", question: `¿Cuál es el foco principal de "${title}"?`, options: [answer, "Una acción no relacionada", "Un dato administrativo"], correct: answer, explanation: objective || answer },
+      { type: "true_false", question: `"${title}" debe aplicarse con base en evidencia del curso.`, correct: true, explanation: objective || answer },
+      { type: "fill_blank", sentence: `${title} se apoya en ___.`, correct: "evidencia", explanation: answer },
+      { type: "highlight_terms", sentence: `${title} requiere seguimiento, medición y mejora continua.`, terms: ["seguimiento", "medición", "mejora continua"] },
+    );
   } else {
-    // tipos sin fallback seguro
     return [];
   }
   return out;
@@ -692,10 +727,10 @@ Deno.serve(async (req) => {
           } catch (e2) {
             const m2 = e2 instanceof Error ? e2.message : String(e2);
             console.error("Reading fallback also failed:", lesson.title, m2);
-            return json({ error: `No se pudo generar la lección "${lesson.title}": ${m2}` }, 422);
+            return json({ ok: false, inserted: 0, reason: `No se pudo generar la lección "${lesson.title}": ${m2}` });
           }
         }
-        return json({ error: `No se pudo generar la lección "${lesson.title}": ${message}` }, 422);
+        return json({ ok: false, inserted: 0, reason: `No se pudo generar la lección "${lesson.title}": ${message}` });
       }
     }
 
