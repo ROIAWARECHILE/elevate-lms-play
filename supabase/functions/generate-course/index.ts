@@ -58,19 +58,14 @@ async function deleteDraftCourseTree(supabase: any, courseId: string) {
 // ---------- AI helpers ----------
 
 function getAiConfig(opts: { fast?: boolean } = {}) {
-  const API_KEY = Deno.env.get("LOVABLE_API_KEY") || Deno.env.get("OPENAI_API_KEY");
-  if (!API_KEY) throw new Error("LOVABLE_API_KEY not configured");
-  const useLovable = !!Deno.env.get("LOVABLE_API_KEY");
+  const API_KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!API_KEY) throw new Error("GEMINI_API_KEY not configured");
   return {
     apiKey: API_KEY,
-    url: useLovable
-      ? "https://ai.gateway.lovable.dev/v1/chat/completions"
-      : "https://api.openai.com/v1/chat/completions",
-    // Flash para tareas con texto ya estructurado (LlamaParse markdown);
-    // Pro para extracción multimodal cuando el contenido viene como imagen/PDF.
-    model: useLovable
-      ? (opts.fast ? "google/gemini-2.5-flash" : "google/gemini-2.5-pro")
-      : "gpt-4o",
+    // Endpoint OpenAI-compatible de Google Gemini
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    // Flash para texto ya estructurado (markdown LlamaParse); Pro para multimodal complejo.
+    model: opts.fast ? "gemini-2.5-flash" : "gemini-2.5-pro",
   };
 }
 
