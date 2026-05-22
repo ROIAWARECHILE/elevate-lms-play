@@ -6,7 +6,8 @@
 
 export type LessonType =
   | "reading" | "concept" | "flashcards" | "steps" | "comparison"
-  | "case_study" | "interactive_quiz" | "video_embed" | "sop_walkthrough";
+  | "case_study" | "interactive_quiz" | "video_embed" | "sop_walkthrough"
+  | "client_chat";
 
 export const QUIZ_BLOCK_TYPES = [
   "mc", "true_false", "fill_blank", "match_pairs", "order_steps",
@@ -23,6 +24,7 @@ export const MIN_BLOCKS_BY_TYPE: Record<string, number> = {
   interactive_quiz: 4,
   sop_walkthrough: 3,
   video_embed: 1,
+  client_chat: 4,
 };
 
 function nonEmptyStr(v: unknown): v is string {
@@ -133,6 +135,25 @@ export function sanitizeBlock(lessonType: string, raw: any): any | null {
     return { type: "video", provider, url: raw.url.trim(), title: nonEmptyStr(raw.title) ? raw.title.trim() : undefined };
   }
 
+  if (lessonType === "client_chat") {
+    if (t === "chat_setup") {
+      if (!nonEmptyStr(raw.persona_name) || !nonEmptyStr(raw.context) || !nonEmptyStr(raw.objective)) return null;
+      return { type: "chat_setup", persona_name: raw.persona_name.trim(), persona_role: nonEmptyStr(raw.persona_role) ? raw.persona_role.trim() : "", persona_mood: raw.persona_mood || "neutral", context: raw.context.trim(), objective: raw.objective.trim() };
+    }
+    if (t === "chat_turn") {
+      if (!nonEmptyStr(raw.client_message)) return null;
+      const choices = Array.isArray(raw.choices)
+        ? raw.choices.filter((c: any) => nonEmptyStr(c?.text) && nonEmptyStr(c?.quality) && nonEmptyStr(c?.feedback))
+        : [];
+      if (choices.length < 2) return null;
+      return { type: "chat_turn", turn: typeof raw.turn === "number" ? raw.turn : 0, client_message: raw.client_message.trim(), choices };
+    }
+    if (t === "chat_outcome") {
+      if (!raw.messages || !nonEmptyStr(raw.messages?.success) || !nonEmptyStr(raw.messages?.partial) || !nonEmptyStr(raw.messages?.failure)) return null;
+      return { type: "chat_outcome", max_score: typeof raw.max_score === "number" ? raw.max_score : 0, thresholds: raw.thresholds || { success: 0, partial: 0 }, messages: { success: raw.messages.success.trim(), partial: raw.messages.partial.trim(), failure: raw.messages.failure.trim() }, tips: Array.isArray(raw.tips) ? raw.tips.filter((s: any) => typeof s === "string" && s.trim()) : [] };
+    }
+    return null;
+  }
   if (lessonType === "interactive_quiz") {
     if (!(QUIZ_BLOCK_TYPES as readonly string[]).includes(t)) return null;
     if (t === "mc") {

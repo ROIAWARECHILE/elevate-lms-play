@@ -1,8 +1,17 @@
 // =====================================================================
 // parse-source — Convierte PDFs / imágenes / docx a markdown estructurado
 // usando LlamaParse (https://docs.cloud.llamaindex.ai/llamaparse).
-// Devuelve markdown limpio que generate-course puede consumir como texto.
+//
+// Acepta dos modos de entrada:
+//   - storageUrl + storagePath: descarga el archivo desde Supabase Storage
+//     (flujo principal para archivos >4MB, sin limit de payload HTTP)
+//   - payload: base64 del archivo (flujo legacy para imágenes pequeñas en
+//     fallback de modo visión)
+//
+// Tras parsear, elimina el archivo de Storage para evitar huérfanos.
 // =====================================================================
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,8 +19,8 @@ const corsHeaders = {
 };
 
 const LLAMA_BASE = "https://api.cloud.llamaindex.ai/api/v1/parsing";
-const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
-const MAX_POLL_MS = 110_000; // <120s para no chocar con el límite de la edge function
+const MAX_BYTES = 55 * 1024 * 1024; // 55 MB
+const MAX_POLL_MS = 110_000;
 
 const KIND_TO_MIME: Record<string, string> = {
   pdf: "application/pdf",
@@ -37,6 +46,13 @@ function base64ToBytes(b64: string): Uint8Array {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
+}
+
+async function downloadFromStorage(storageUrl: string): Promise<Uint8Array> {
+  const res = await fetch(storageUrl);
+  if (!res.ok) throw new Error(`Error descargando archivo de Storage: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  return new Uint8Array(buf);
 }
 
 async function uploadToLlama(apiKey: string, kind: string, name: string, bytes: Uint8Array, mimeOverride?: string) {
@@ -94,7 +110,7 @@ async function pollJob(apiKey: string, jobId: string) {
     if (status === "ERROR" || status === "CANCELED" || status === "FAILED") {
       throw new Error(`LlamaParse job falló: ${data?.error || status}`);
     }
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, 1500)); // 1.5s entre polls (antes 2.5s)
   }
   throw new Error("LlamaParse timeout (>110s). El documento es muy grande, prueba dividirlo.");
 }
@@ -114,23 +130,45 @@ async function fetchMarkdown(apiKey: string, jobId: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  let storagePath: string | undefined;
+  let supabaseAdmin: ReturnType<typeof createClient> | null = null;
+
   try {
     const apiKey = Deno.env.get("LLAMAPARSE_API_KEY");
     if (!apiKey) return json({ error: "LLAMAPARSE_API_KEY no configurado" }, 500);
 
     const body = await req.json();
-    const { kind, name, payload, mime } = body || {};
-    if (!kind || !payload) return json({ error: "kind y payload son requeridos" }, 400);
+    const { kind, name, payload, mime, storageUrl } = body || {};
+    storagePath = body?.storagePath;
+
+    if (!kind) return json({ error: "kind es requerido" }, 400);
     if (!["pdf", "image", "docx", "pptx"].includes(kind)) {
       return json({ error: `kind no soportado: ${kind}` }, 400);
     }
+    if (!storageUrl && !payload) {
+      return json({ error: "storageUrl o payload son requeridos" }, 400);
+    }
+
+    // Inicializar cliente de Supabase con service role para limpiar Storage
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (supabaseUrl && serviceKey) {
+      supabaseAdmin = createClient(supabaseUrl, serviceKey);
+    }
 
     let bytes: Uint8Array;
-    try {
-      bytes = base64ToBytes(String(payload));
-    } catch {
-      return json({ error: "payload base64 inválido" }, 400);
+    if (storageUrl) {
+      // Flujo principal: descargar desde Supabase Storage
+      bytes = await downloadFromStorage(storageUrl);
+    } else {
+      // Flujo legacy: payload base64
+      try {
+        bytes = base64ToBytes(String(payload));
+      } catch {
+        return json({ error: "payload base64 inválido" }, 400);
+      }
     }
+
     if (bytes.byteLength > MAX_BYTES) {
       return json({ error: `Archivo excede ${Math.round(MAX_BYTES / 1024 / 1024)} MB` }, 413);
     }
@@ -138,6 +176,11 @@ Deno.serve(async (req) => {
     const jobId = await uploadToLlama(apiKey, kind, name || "source", bytes, mime);
     const meta = await pollJob(apiKey, jobId);
     const markdown = await fetchMarkdown(apiKey, jobId);
+
+    // Limpiar archivo de Storage tras parsear correctamente
+    if (supabaseAdmin && storagePath) {
+      await supabaseAdmin.storage.from("course-uploads").remove([storagePath]);
+    }
 
     const tables = (markdown.match(/\n\|.+\|\n\|[\s:|-]+\|/g) || []).length;
     const headings = (markdown.match(/^#{1,6}\s/gm) || []).length;
@@ -151,6 +194,12 @@ Deno.serve(async (req) => {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("parse-source error:", message);
+
+    // Limpiar archivo de Storage aunque haya fallado el parse
+    if (supabaseAdmin && storagePath) {
+      await supabaseAdmin.storage.from("course-uploads").remove([storagePath]).catch(() => {});
+    }
+
     return json({ error: message }, 400);
   }
 });

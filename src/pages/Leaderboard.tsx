@@ -15,27 +15,87 @@ interface LeaderboardUser {
   avatar_url: string | null;
 }
 
+type Period = "week" | "month" | "all";
+
+const PERIODS: { key: Period; label: string }[] = [
+  { key: "week", label: "Esta semana" },
+  { key: "month", label: "Este mes" },
+  { key: "all", label: "Siempre" },
+];
+
+function getPeriodStart(period: Period): string | null {
+  if (period === "all") return null;
+  const d = new Date();
+  if (period === "week") {
+    d.setDate(d.getDate() - d.getDay());
+  } else {
+    d.setDate(1);
+  }
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
 export default function Leaderboard() {
   const { user, profile } = useAuth();
   const [users, setUsers] = useState<LeaderboardUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<Period>("all");
 
   useEffect(() => {
     const fetch = async () => {
       if (!profile?.company_id) return;
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, full_name, xp_total, current_streak, level, avatar_url")
-        .eq("company_id", profile.company_id)
-        .order("xp_total", { ascending: false })
-        .limit(50);
-      if (data) setUsers(data as LeaderboardUser[]);
+      setLoading(true);
+
+      if (period === "all") {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, full_name, xp_total, current_streak, level, avatar_url")
+          .eq("company_id", profile.company_id)
+          .order("xp_total", { ascending: false })
+          .limit(50);
+        if (data) setUsers(data as LeaderboardUser[]);
+      } else {
+        const start = getPeriodStart(period);
+        const { data: xpData } = await supabase.rpc("get_leaderboard_period", {
+          _company_id: profile.company_id,
+          _since: start!,
+          _limit: 50,
+        });
+
+        const rows = (xpData ?? []) as { user_id: string; total_xp: number }[];
+
+        if (rows.length === 0) {
+          setUsers([]);
+          setLoading(false);
+          return;
+        }
+
+        const xpByUser = new Map(rows.map((r) => [r.user_id, r.total_xp]));
+
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("id, full_name, current_streak, level, avatar_url")
+          .eq("company_id", profile.company_id)
+          .in("id", Array.from(xpByUser.keys()));
+
+        const merged: LeaderboardUser[] = (profiles ?? []).map((p: any) => ({
+          ...p,
+          xp_total: xpByUser.get(p.id) ?? 0,
+        }));
+        merged.sort((a, b) => b.xp_total - a.xp_total);
+        setUsers(merged);
+      }
+
       setLoading(false);
     };
     fetch();
-  }, [profile?.company_id]);
+  }, [profile?.company_id, period]);
 
   const medalColors = ["text-xp", "text-muted-foreground", "text-streak"];
+  const myIndex = users.findIndex((u) => u.id === user?.id);
+  const myUser = myIndex >= 0 ? users[myIndex] : null;
+  const above = myIndex > 0 ? users[myIndex - 1] : null;
+  const xpGap = above && myUser ? above.xp_total - myUser.xp_total : 0;
 
   return (
     <div className="space-y-6">
@@ -45,6 +105,23 @@ export default function Leaderboard() {
         </h1>
         <p className="text-muted-foreground">Los mejores aprendices de tu empresa.</p>
       </motion.div>
+
+      {/* Period tabs */}
+      <div className="flex gap-1.5 bg-muted/50 p-1 rounded-xl w-fit">
+        {PERIODS.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => setPeriod(p.key)}
+            className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-all ${
+              period === p.key
+                ? "bg-background shadow-sm text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
 
       <Card className="shadow-card">
         <CardContent className="p-0">
@@ -57,7 +134,7 @@ export default function Leaderboard() {
           ) : users.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground">
               <Trophy className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>El ranking aparecerá cuando haya actividad.</p>
+              <p>Sin actividad en este período.</p>
             </div>
           ) : (
             <div className="divide-y divide-border">
@@ -111,6 +188,18 @@ export default function Leaderboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* Distancia al jugador superior */}
+      {above && xpGap > 0 && (
+        <motion.p
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-sm text-center text-muted-foreground"
+        >
+          Te separan <span className="text-xp font-semibold">{xpGap} XP</span> de{" "}
+          <span className="font-medium">{above.full_name || "el jugador anterior"}</span>
+        </motion.p>
+      )}
     </div>
   );
 }

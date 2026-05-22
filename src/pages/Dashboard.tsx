@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { BookOpen, Trophy, Flame, Zap, Target, TrendingUp, Users, Award, ArrowRight, Play } from "lucide-react";
+import { BookOpen, Trophy, Flame, Zap, Target, TrendingUp, Users, Award, ArrowRight, Play, Clock, Sparkles, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { WalkthroughOverlay } from "@/components/WalkthroughOverlay";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
@@ -13,7 +13,7 @@ import { KibboExpression } from "@/components/KibboExpression";
 import { StreakWidget } from "@/components/StreakWidget";
 import { DailyQuestsWidget } from "@/components/DailyQuestsWidget";
 import { PracticeCTA } from "@/components/PracticeCTA";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 const fadeIn = {
   initial: { opacity: 0, y: 12 },
@@ -72,10 +72,17 @@ function ContinueLearningCard({ userId, companyId }: { userId: string; companyId
       const nextLesson = allLessons.find((l: any) => !completedIds.has(l.id));
 
       if (courseRes.data && nextLesson) {
+        // Calcular progreso del módulo específico
+        const moduleId = nextLesson.module_id;
+        const moduleLessons = allLessons.filter((l: any) => l.module_id === moduleId);
+        const moduleCompleted = moduleLessons.filter((l: any) => completedIds.has(l.id)).length;
+        const moduleTitle = (nextLesson as any).modules?.title || "";
+
         setNextItem({
           course: courseRes.data,
           lesson: nextLesson,
           progress: allLessons.length > 0 ? (completedIds.size / allLessons.length) * 100 : 0,
+          moduleProgress: { done: moduleCompleted, total: moduleLessons.length, title: moduleTitle },
         });
       }
       setLoading(false);
@@ -93,9 +100,15 @@ function ContinueLearningCard({ userId, companyId }: { userId: string; companyId
         </div>
         <CardContent className="p-5">
           <h3 className="font-bold text-lg mb-1">{nextItem.course.title}</h3>
-          <p className="text-sm text-muted-foreground mb-3">
+          <p className="text-sm text-muted-foreground mb-1">
             Siguiente: {nextItem.lesson.title}
           </p>
+          {nextItem.moduleProgress && (
+            <p className="text-xs text-muted-foreground/70 mb-3">
+              Lección {nextItem.moduleProgress.done + 1} de {nextItem.moduleProgress.total}
+              {nextItem.moduleProgress.title ? ` · ${nextItem.moduleProgress.title}` : ""}
+            </p>
+          )}
           <div className="flex items-center gap-3 mb-4">
             <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
               <motion.div
@@ -145,11 +158,127 @@ function StatCard({ stat, index }: { stat: any; index: number }) {
   );
 }
 
+function EmptyCoursesState({ firstName }: { firstName: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+    >
+      <Card className="shadow-card border-dashed border-2 border-primary/20">
+        <CardContent className="p-10 flex flex-col items-center text-center gap-4">
+          <KibboExpression expression="sleeping" className="w-24 h-24" />
+          <div>
+            <h2 className="text-xl font-bold mb-1">
+              ¡Hola{firstName ? `, ${firstName}` : ""}! Tu espacio está listo.
+            </h2>
+            <p className="text-muted-foreground text-sm max-w-sm">
+              Tu empresa aún no ha publicado cursos. En cuanto estén disponibles aparecerán aquí y podrás empezar a aprender.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-md mt-2">
+            {[
+              { icon: Zap, label: "Gana XP", desc: "Por cada lección completada", color: "text-xp bg-xp/10" },
+              { icon: Flame, label: "Mantén tu racha", desc: "Estudia todos los días", color: "text-streak bg-streak/10" },
+              { icon: Trophy, label: "Sube de nivel", desc: "Desbloquea logros", color: "text-primary bg-primary/10" },
+            ].map((item) => (
+              <div key={item.label} className="flex flex-col items-center gap-2 p-3 rounded-xl bg-muted/40">
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${item.color}`}>
+                  <item.icon className="w-5 h-5" />
+                </div>
+                <p className="text-xs font-semibold">{item.label}</p>
+                <p className="text-[11px] text-muted-foreground">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            ¿Tienes dudas? Contacta al administrador de tu empresa.
+          </p>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+function WeakTopicsWidget({ userId }: { userId: string }) {
+  const navigate = useNavigate();
+  const [mistakes, setMistakes] = useState<any[]>([]);
+  const [recommendedModule, setRecommendedModule] = useState<{ id: string; title: string } | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from("user_mistakes" as any)
+      .select("id, question, block_type, times_failed, lesson_id")
+      .eq("user_id", userId)
+      .eq("mastered", false)
+      .order("times_failed", { ascending: false })
+      .limit(5)
+      .then(async ({ data }) => {
+        if (!data || data.length === 0) return;
+        setMistakes(data.slice(0, 3));
+        // Encontrar el módulo con más errores
+        const lessonIds = data.map((m: any) => m.lesson_id).filter(Boolean);
+        if (lessonIds.length > 0) {
+          const { data: lessons } = await supabase
+            .from("lessons")
+            .select("id, module_id, modules(id, title)")
+            .in("id", lessonIds);
+          if (lessons && lessons.length > 0) {
+            const moduleCounts = new Map<string, { title: string; count: number }>();
+            for (const l of lessons as any[]) {
+              const mid = l.modules?.id;
+              const mtitle = l.modules?.title;
+              if (mid) moduleCounts.set(mid, { title: mtitle, count: (moduleCounts.get(mid)?.count ?? 0) + 1 });
+            }
+            const top = Array.from(moduleCounts.entries()).sort((a, b) => b[1].count - a[1].count)[0];
+            if (top) setRecommendedModule({ id: top[0], title: top[1].title });
+          }
+        }
+      });
+  }, [userId]);
+
+  if (mistakes.length === 0) return null;
+
+  return (
+    <motion.div {...fadeIn} transition={{ delay: 0.45 }}>
+      <Card className="shadow-card border-destructive/20">
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-destructive" /> Temas a reforzar
+            </h3>
+            <span className="text-xs text-muted-foreground">{mistakes.length} pendiente{mistakes.length > 1 ? "s" : ""}</span>
+          </div>
+          <div className="space-y-2 mb-3">
+            {mistakes.map((m: any) => (
+              <div key={m.id} className="flex items-start gap-2 text-sm">
+                <span className="w-1.5 h-1.5 rounded-full bg-destructive/60 flex-shrink-0 mt-1.5" />
+                <span className="text-muted-foreground leading-snug flex-1 line-clamp-1">{m.question}</span>
+                <span className="text-xs text-destructive/70 flex-shrink-0 font-medium">×{m.times_failed}</span>
+              </div>
+            ))}
+          </div>
+          {recommendedModule && (
+            <p className="text-xs text-muted-foreground mb-3 flex items-center gap-1">
+              <BookOpen className="w-3 h-3 flex-shrink-0" />
+              Recomendado: repasa <span className="font-medium text-foreground">{recommendedModule.title}</span>
+            </p>
+          )}
+          <Button size="sm" variant="outline" className="w-full border-destructive/30 text-destructive hover:bg-destructive/5" onClick={() => navigate("/app/practice")}>
+            Practicar ahora
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
 function CollaboratorDashboard({ profile }: { profile: any }) {
   const { user } = useAuth();
   const [coursesCount, setCoursesCount] = useState(0);
   const [courses, setCourses] = useState<any[]>([]);
   const [dailyXp, setDailyXp] = useState(0);
+  const [loadingCourses, setLoadingCourses] = useState(true);
 
   useEffect(() => {
     if (!user || !profile?.company_id) return;
@@ -170,6 +299,7 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
         setCoursesCount(coursesRes.data.length);
       }
       if (xpRes.data) setDailyXp(xpRes.data.reduce((sum, r) => sum + r.xp_amount, 0));
+      setLoadingCourses(false);
     };
     fetchData();
   }, [user, profile?.company_id]);
@@ -181,6 +311,18 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
     { label: "Cursos", value: coursesCount, icon: BookOpen, color: "text-success", bg: "bg-success/10" },
   ];
 
+  const firstName = profile?.full_name?.split(" ")[0] || "";
+  const hasCourses = !loadingCourses && courses.length > 0;
+  const noCourses = !loadingCourses && courses.length === 0;
+
+  if (noCourses) {
+    return (
+      <div className="space-y-6" data-walkthrough="dashboard">
+        <EmptyCoursesState firstName={firstName} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6" data-walkthrough="dashboard">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-4">
@@ -189,7 +331,7 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
           className="w-16 h-16 flex-shrink-0"
         />
         <div>
-          <h1 className="text-2xl font-bold">¡Hola, {profile?.full_name?.split(" ")[0] || "Colaborador"}!</h1>
+          <h1 className="text-2xl font-bold">¡Hola, {firstName || "Colaborador"}!</h1>
           <p className="text-muted-foreground">
             {(profile?.current_streak || 0) > 0
               ? `🔥 Racha de ${profile.current_streak} días — ¡sigue así!`
@@ -209,6 +351,8 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
       </div>
 
       <PracticeCTA />
+
+      {user && <WeakTopicsWidget userId={user.id} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <StreakWidget
@@ -251,35 +395,27 @@ function CollaboratorDashboard({ profile }: { profile: any }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {courses.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <Target className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p className="font-medium">No tienes cursos asignados aún</p>
-                <p className="text-sm">Tu admin te asignará cursos pronto.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {courses.map((course, i) => (
-                  <motion.div
-                    key={course.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.7 + i * 0.05 }}
-                  >
-                    <Link to={`/app/courses/${course.id}`} className="flex items-center gap-4 p-3 rounded-xl hover:bg-muted/50 transition-all duration-200 group">
-                      <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground group-hover:scale-110 transition-transform duration-200">
-                        <BookOpen className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">{course.title}</p>
-                        <p className="text-xs text-muted-foreground">{course.estimated_duration_minutes}min · {course.xp_reward} XP</p>
-                      </div>
-                      <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:translate-x-1 transition-transform duration-200" />
-                    </Link>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+            <div className="space-y-3">
+              {courses.map((course, i) => (
+                <motion.div
+                  key={course.id}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.7 + i * 0.05 }}
+                >
+                  <Link to={`/app/courses/${course.id}`} className="flex items-center gap-4 p-3 rounded-xl hover:bg-muted/50 transition-all duration-200 group">
+                    <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground group-hover:scale-110 transition-transform duration-200">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{course.title}</p>
+                      <p className="text-xs text-muted-foreground">{course.estimated_duration_minutes}min · {course.xp_reward} XP</p>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:translate-x-1 transition-transform duration-200" />
+                  </Link>
+                </motion.div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       </motion.div>
@@ -296,7 +432,7 @@ function AdminDashboard({ profile }: { profile: any }) {
     const fetchStats = async () => {
       const [profilesRes, coursesRes] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }).eq("company_id", profile.company_id),
-        supabase.from("courses").select("id", { count: "exact", head: true }).eq("status", "published"),
+        supabase.from("courses").select("id", { count: "exact", head: true }).eq("status", "published").eq("company_id", profile.company_id),
       ]);
       setStats({ users: profilesRes.count || 0, courses: coursesRes.count || 0 });
     };

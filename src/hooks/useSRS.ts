@@ -114,7 +114,7 @@ export function useSRS() {
     });
     if (error) {
       console.warn("srs_get_due", error.message);
-      return [];
+      throw error;
     }
     return (data ?? []) as SrsItem[];
   }, [user]);

@@ -12,6 +12,7 @@ import {
   Sheet as SheetIcon, Upload, X, Sparkles, Check, Loader2, BookOpen,
   Lightbulb, Layers, ListOrdered, Columns3, Briefcase, Brain,
   Plus, Trash2, ArrowUp, ArrowDown, RefreshCw, AlertTriangle,
+  Database, Globe, Building2, MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,25 +38,29 @@ interface Source {
 
 const STEPS = ["Fuentes", "Brief", "Outline", "Generar"] as const;
 
-// File size caps (MB → bytes) to keep edge function payloads manageable.
 const SIZE_CAPS: Record<"pdf" | "image" | "excel", number> = {
-  pdf: 15 * 1024 * 1024,
-  image: 8 * 1024 * 1024,
-  excel: 5 * 1024 * 1024,
+  pdf: 50 * 1024 * 1024,    // 50 MB — archivos van a Storage, no como base64 en payload
+  image: 20 * 1024 * 1024,  // 20 MB
+  excel: 10 * 1024 * 1024,  // 10 MB — procesado localmente con XLSX.js
 };
 
 const TYPE_ICON: Record<string, any> = {
   reading: BookOpen, concept: Lightbulb, flashcards: Layers, steps: ListOrdered,
   comparison: Columns3, case_study: Briefcase, interactive_quiz: Brain,
-  sop_walkthrough: ListOrdered,
+  sop_walkthrough: ListOrdered, client_chat: MessageSquare,
 };
 const TYPE_LABEL: Record<string, string> = {
   reading: "Lectura", concept: "Conceptos", flashcards: "Tarjetas", steps: "Pasos",
   comparison: "Comparativa", case_study: "Caso", interactive_quiz: "Quiz",
-  sop_walkthrough: "Procedimiento",
+  sop_walkthrough: "Procedimiento", client_chat: "Chat cliente",
 };
 
 type ModuleStatus = "pending" | "in_progress" | "done" | "skipped" | "deleted";
+
+function isValidBrief(brief: any): boolean {
+  if (!brief || typeof brief !== "object") return false;
+  return Array.isArray(brief.key_concepts) && brief.key_concepts.length > 0;
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -67,6 +72,35 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+async function uploadToStorage(
+  file: File,
+  userId: string,
+): Promise<{ storagePath: string; signedUrl: string }> {
+  const ext = file.name.split(".").pop() || "bin";
+  const storagePath = `${userId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const { error: upErr } = await supabase.storage
+    .from("course-uploads")
+    .upload(storagePath, file, { upsert: false });
+  if (upErr) throw new Error(`Error al subir archivo: ${upErr.message}`);
+  const { data: signedData, error: signErr } = await supabase.storage
+    .from("course-uploads")
+    .createSignedUrl(storagePath, 600); // 10 minutos
+  if (signErr || !signedData?.signedUrl) throw new Error("No se pudo generar URL firmada");
+  return { storagePath, signedUrl: signedData.signedUrl };
+}
+
+function humanizeUrlError(raw: string): string {
+  if (raw.includes("abort") || raw.includes("timeout") || raw.includes("25s"))
+    return "El sitio tardó demasiado en responder. Intenta con otra URL.";
+  if (raw.includes("403") || raw.includes("Forbidden") || raw.includes("bloqueó"))
+    return raw.includes("bloqueó") ? raw : "El sitio bloqueó el acceso. Copia el texto manualmente.";
+  if (raw.includes("404")) return "Página no encontrada (404). Verifica la URL.";
+  if (raw.includes("PDF") || raw.includes("JavaScript") || raw.includes("grande"))
+    return raw;
+  if (raw.includes("contenido útil")) return raw;
+  return `No se pudo obtener el contenido: ${raw}`;
 }
 
 function excelToMarkdown(file: File): Promise<string> {
@@ -117,6 +151,16 @@ export default function CourseStudio() {
   const [moduleStatuses, setModuleStatuses] = useState<ModuleStatus[]>([]);
   const cancelRef = useRef(false);
 
+  // Blueprint mode state
+  const [studioMode, setStudioMode] = useState<"classic" | "blueprint" | null>(null);
+  const [bpStep, setBpStep] = useState(0);
+  const [bpSourceId, setBpSourceId] = useState("");
+  const [bpBlueprintId, setBpBlueprintId] = useState("");
+  const [bpBlueprintData, setBpBlueprintData] = useState<any>(null);
+  const [bpVariables, setBpVariables] = useState<Record<string, string>>({});
+  const [bpLibrarySources, setBpLibrarySources] = useState<any[]>([]);
+  const [bpLibraryBlueprints, setBpLibraryBlueprints] = useState<any[]>([]);
+
   // Brief richness gate
   const briefRichness = useMemo(() => {
     if (!brief) return 0;
@@ -140,7 +184,7 @@ export default function CourseStudio() {
 
   // ----- Source handlers -----
   const addFiles = async (files: FileList | null, kind: "pdf" | "image", inputEl?: HTMLInputElement) => {
-    if (!files) return;
+    if (!files || !user) return;
     const next: Source[] = [];
     for (const f of Array.from(files)) {
       if (f.size > SIZE_CAPS[kind]) {
@@ -152,12 +196,15 @@ export default function CourseStudio() {
         continue;
       }
       try {
-        const payload = await fileToBase64(f);
-        // Parsear con LlamaParse para obtener markdown estructurado.
+        // 1. Subir a Storage (binario directo, sin base64)
+        setProgressMsg(`Subiendo ${f.name} (${(f.size / 1024 / 1024).toFixed(1)} MB)…`);
+        const { storagePath, signedUrl } = await uploadToStorage(f, user.id);
+
+        // 2. Parsear con LlamaParse pasando la URL firmada
         setProgressMsg(`Parseando ${f.name} con LlamaParse…`);
         try {
           const { data, error } = await supabase.functions.invoke("parse-source", {
-            body: { kind, name: f.name, payload },
+            body: { kind, name: f.name, storageUrl: signedUrl, storagePath },
           });
           if (error || data?.error) throw new Error(data?.error || error?.message || "parse failed");
           const md = String(data?.markdown || "").trim();
@@ -177,18 +224,25 @@ export default function CourseStudio() {
             });
             continue;
           }
-          // Markdown vacío: caemos al modo visión clásico
           throw new Error("markdown vacío");
         } catch (parseErr: any) {
-          console.warn("LlamaParse falló, usando modo visión:", parseErr?.message);
-          toast({
-            title: "Parseado básico",
-            description: `${f.name}: usando modo visión (LlamaParse no disponible).`,
-          });
-          next.push({ id: crypto.randomUUID(), kind, name: f.name, payload });
+          console.warn("LlamaParse falló:", parseErr?.message);
+          if (kind === "image") {
+            // Fallback a modo visión para imágenes: leer localmente como base64
+            toast({ title: "Parseado básico", description: `${f.name}: usando modo visión.` });
+            const payload = await fileToBase64(f);
+            next.push({ id: crypto.randomUUID(), kind, name: f.name, payload });
+          } else {
+            // Para PDFs no hay fallback útil
+            toast({
+              title: "Error al parsear",
+              description: `${f.name}: ${parseErr?.message || "LlamaParse no disponible"}`,
+              variant: "destructive",
+            });
+          }
         }
-      } catch {
-        toast({ title: "Error", description: `No se pudo leer ${f.name}`, variant: "destructive" });
+      } catch (err: any) {
+        toast({ title: "Error", description: err?.message || `No se pudo procesar ${f.name}`, variant: "destructive" });
       }
     }
     setProgressMsg("");
@@ -263,9 +317,10 @@ export default function CourseStudio() {
         },
       ]);
       setUrlInput("");
-      toast({ title: "URL añadida", description: data.title || u });
+      const words = data.wordCount ?? Math.round((data.text?.split(/\s+/).filter(Boolean).length || 0));
+      toast({ title: "URL añadida", description: `${data.title || u} · ~${words.toLocaleString()} palabras extraídas` });
     } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
+      toast({ title: "No se pudo cargar la URL", description: humanizeUrlError(e.message), variant: "destructive" });
     } finally {
       setLoading(false);
       setProgressMsg("");
@@ -307,6 +362,14 @@ export default function CourseStudio() {
 
   const runOutline = async () => {
     if (!profile?.company_id || !user?.id || !brief) return;
+    if (!isValidBrief(brief)) {
+      toast({
+        title: "Brief sin estructura válida",
+        description: "No se detectaron conceptos clave. Vuelve al paso anterior y agrega más material.",
+        variant: "destructive",
+      });
+      return;
+    }
     setLoading(true);
     setProgressMsg("Diseñando módulos y eligiendo el tipo de cada lección…");
     try {
@@ -408,7 +471,12 @@ export default function CourseStudio() {
     setModuleStatuses(Array(totalModules).fill("pending") as ModuleStatus[]);
     setGenProgress(0);
     setProgressMsg(`Creando estructura del curso…`);
-    const pauseForAiQuota = () => new Promise((resolve) => setTimeout(resolve, 7000));
+    const pauseForAiQuota = () => new Promise((resolve) => setTimeout(resolve, 2000));
+
+    // Progreso granular: contar lecciones + quizzes + 2 (init + finalize) como unidades
+    const totalLessons = outline.modules?.reduce((sum: number, m: any) => sum + (m.lessons?.length || 0), 0) || 0;
+    const totalUnits = totalLessons + totalModules + 2;
+    let completedUnits = 1; // init completado
 
     let courseId: string | null = null;
     try {
@@ -483,6 +551,8 @@ export default function CourseStudio() {
               moduleSkipped += 1;
             }
           }
+          completedUnits += 1;
+          setGenProgress(Math.max(5, Math.round((completedUnits / totalUnits) * 100)));
           if (!cancelRef.current && (li < lessons.length - 1 || mi < totalModules - 1)) {
             setProgressMsg(`Pausando unos segundos para respetar la cuota de IA…`);
             await pauseForAiQuota();
@@ -516,6 +586,8 @@ export default function CourseStudio() {
         } catch (e: any) {
           console.warn("Quiz exception:", e?.message);
         }
+        completedUnits += 1;
+        setGenProgress(Math.max(5, Math.round((completedUnits / totalUnits) * 100)));
         totalInserted += moduleInserted;
         totalSkipped += moduleSkipped;
         if (qd.deleted || moduleInserted === 0) {
@@ -525,7 +597,6 @@ export default function CourseStudio() {
           okModules += 1;
           setModuleStatuses((arr) => arr.map((s, i) => (i === mi ? "done" : s)));
         }
-        setGenProgress(Math.round(((mi + 1) / totalModules) * 100));
       }
 
       // 3) Finalize: recompute xp/duration. If nothing was generated, delete the draft.
@@ -580,6 +651,103 @@ export default function CourseStudio() {
     toast({ title: "Cancelando…", description: "Se detendrá tras el módulo actual." });
   };
 
+  // ----- Blueprint Mode helpers -----
+  const enterBlueprintMode = async () => {
+    if (!profile?.company_id) return;
+    setLoading(true);
+    try {
+      const [srcRes, bpRes] = await Promise.all([
+        supabase.from("source_library" as any)
+          .select("id, title, source_type, word_count")
+          .eq("company_id", profile.company_id)
+          .order("created_at", { ascending: false }),
+        supabase.from("course_blueprints" as any)
+          .select("id, company_id, slug, name, description, category, structure, is_template")
+          .or(`company_id.eq.${profile.company_id},company_id.is.null`)
+          .order("is_template", { ascending: false })
+          .order("name"),
+      ]);
+      setBpLibrarySources((srcRes.data as any[]) || []);
+      setBpLibraryBlueprints((bpRes.data as any[]) || []);
+      setStudioMode("blueprint");
+      setBpStep(0);
+    } catch (e: any) {
+      toast({ title: "Error cargando datos", description: e.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const substituteVariables = (template: string, vars: Record<string, string>): string =>
+    template.replace(/\{(\w+)\}/g, (_, k) => vars[k] || `{${k}}`);
+
+  const runBlueprintGenerate = async () => {
+    if (!profile?.company_id || !user?.id || !bpBlueprintData) return;
+    const selectedSource = bpLibrarySources.find((s) => s.id === bpSourceId);
+    if (!selectedSource) return;
+
+    setLoading(true);
+    setProgressMsg("Cargando fuente…");
+    try {
+      const { data: srcData } = await supabase
+        .from("source_library" as any)
+        .select("content_md, title")
+        .eq("id", bpSourceId)
+        .single();
+      if (!srcData) throw new Error("No se encontró la fuente seleccionada.");
+      const sourceMd = (srcData as any).content_md as string;
+
+      // Construir título a partir del blueprint y variables
+      const courseTitle = title.trim() ||
+        substituteVariables(bpBlueprintData.structure.modules[0]?.title_template || bpBlueprintData.name, bpVariables);
+
+      // Extraer brief del contenido de la fuente
+      setProgressMsg("Extrayendo conocimiento de la fuente…");
+      const extractRes = await supabase.functions.invoke("generate-course", {
+        body: {
+          mode: "extract",
+          companyId: profile.company_id,
+          userId: user.id,
+          sources: [{ kind: "text", name: selectedSource.title, payload: sourceMd.slice(0, 60_000) }],
+        },
+      });
+      if (extractRes.error || extractRes.data?.error)
+        throw new Error(extractRes.data?.error || extractRes.error?.message || "Extract failed");
+      const extractedBrief = extractRes.data.brief;
+
+      // Construir outline desde el blueprint (sustituyendo variables)
+      const blueprintOutline = {
+        modules: bpBlueprintData.structure.modules.map((mod: any) => ({
+          title: substituteVariables(mod.title_template, bpVariables),
+          description: "",
+          lessons: mod.lessons.map((les: any) => ({
+            title: substituteVariables(les.title_template, bpVariables),
+            lessonType: les.lesson_type,
+          })),
+        })),
+      };
+
+      // Alimentar el flujo clásico con los datos generados
+      setTitle(courseTitle);
+      setBrief(extractedBrief);
+      setOutline(blueprintOutline);
+      setSources([{ id: crypto.randomUUID(), kind: "text", name: selectedSource.title, payload: sourceMd.slice(0, 60_000) }]);
+
+      // Transicionar al paso de generación del modo clásico
+      setStudioMode("classic");
+      setStep(3);
+      setProgressMsg("");
+
+      // Disparar la generación directamente
+      setModuleStatuses(blueprintOutline.modules.map(() => "pending" as const));
+      await runMaterialize();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+      setLoading(false);
+      setProgressMsg("");
+    }
+  };
+
   // ----- Render -----
   return (
     <div className="max-w-5xl mx-auto space-y-6 pb-12">
@@ -595,8 +763,222 @@ export default function CourseStudio() {
         </div>
       </div>
 
-      {/* Stepper */}
-      <div className="flex items-center justify-between gap-2">
+      {/* Selector de modo — solo si no hay modo elegido */}
+      {studioMode === null && (
+        <div className="grid md:grid-cols-2 gap-4 py-4">
+          <Card
+            className="cursor-pointer border-2 hover:border-primary transition-all shadow-card hover:shadow-elevated"
+            onClick={() => setStudioMode("classic")}
+          >
+            <CardContent className="p-6 flex flex-col items-center text-center gap-3">
+              <div className="w-14 h-14 rounded-2xl gradient-primary flex items-center justify-center">
+                <Sparkles className="w-7 h-7 text-primary-foreground" />
+              </div>
+              <div>
+                <p className="font-bold text-lg">Modo clásico</p>
+                <p className="text-sm text-muted-foreground">
+                  Sube fuentes, Kibbo extrae el conocimiento y diseña la estructura. Máximo control.
+                </p>
+              </div>
+              <Badge variant="secondary">4 pasos guiados</Badge>
+            </CardContent>
+          </Card>
+
+          <Card
+            className={`cursor-pointer border-2 hover:border-primary transition-all shadow-card hover:shadow-elevated ${loading ? "opacity-50 pointer-events-none" : ""}`}
+            onClick={enterBlueprintMode}
+          >
+            <CardContent className="p-6 flex flex-col items-center text-center gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+                {loading ? <Loader2 className="w-7 h-7 animate-spin" /> : <Layers className="w-7 h-7" />}
+              </div>
+              <div>
+                <p className="font-bold text-lg">Modo Blueprint</p>
+                <p className="text-sm text-muted-foreground">
+                  Elige una fuente de tu librería y una plantilla pedagógica. Genera en 1 clic.
+                </p>
+              </div>
+              <Badge variant="secondary">Plantillas predefinidas</Badge>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Blueprint Mode steps */}
+      {studioMode === "blueprint" && (
+        <div className="space-y-6">
+          {/* Blueprint stepper */}
+          <div className="flex items-center gap-2">
+            {["Fuente", "Blueprint", "Variables", "Generar"].map((label, i) => (
+              <div key={label} className="flex items-center gap-2 flex-1">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
+                  i < bpStep ? "bg-primary text-primary-foreground"
+                  : i === bpStep ? "bg-primary/20 text-primary border-2 border-primary"
+                  : "bg-muted text-muted-foreground"
+                }`}>
+                  {i < bpStep ? <Check className="w-4 h-4" /> : i + 1}
+                </div>
+                <span className={`text-sm font-medium ${i === bpStep ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>
+                {i < 3 && <div className="flex-1 h-px bg-border" />}
+              </div>
+            ))}
+          </div>
+
+          <AnimatePresence mode="wait">
+            <motion.div key={bpStep} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
+              {/* BP Step 0: Select source */}
+              {bpStep === 0 && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div>
+                      <h2 className="font-semibold text-lg mb-1 flex items-center gap-2">
+                        <Database className="w-5 h-5 text-primary" /> Elige la fuente de conocimiento
+                      </h2>
+                      <p className="text-sm text-muted-foreground">Selecciona un documento de tu librería de fuentes.</p>
+                    </div>
+                    <div className="space-y-2">
+                      {bpLibrarySources.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <Database className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                          <p>No hay fuentes en la librería.</p>
+                          <p className="text-xs mt-1">Ve a <strong>Librería de fuentes</strong> para subir documentos.</p>
+                        </div>
+                      ) : (
+                        bpLibrarySources.map((s) => (
+                          <div
+                            key={s.id}
+                            onClick={() => setBpSourceId(s.id)}
+                            className={`p-3 rounded-lg border-2 cursor-pointer transition-all flex items-center gap-3 ${bpSourceId === s.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+                          >
+                            <FileText className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{s.title}</p>
+                              <p className="text-xs text-muted-foreground">{s.source_type?.toUpperCase()} · {s.word_count?.toLocaleString()} palabras</p>
+                            </div>
+                            {bpSourceId === s.id && <Check className="w-5 h-5 text-primary flex-shrink-0" />}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className="space-y-2 pt-2">
+                      <Label>Título del curso (opcional)</Label>
+                      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Se generará automáticamente si no lo escribes" />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* BP Step 1: Select blueprint */}
+              {bpStep === 1 && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div>
+                      <h2 className="font-semibold text-lg mb-1 flex items-center gap-2">
+                        <Layers className="w-5 h-5 text-primary" /> Elige el blueprint pedagógico
+                      </h2>
+                      <p className="text-sm text-muted-foreground">La estructura del curso seguirá exactamente esta plantilla.</p>
+                    </div>
+                    <div className="space-y-2">
+                      {bpLibraryBlueprints.map((bp) => {
+                        const isGlobal = bp.company_id === null;
+                        const totalLessons = bp.structure?.modules?.reduce((acc: number, m: any) => acc + (m.lessons?.length || 0), 0) || 0;
+                        return (
+                          <div
+                            key={bp.id}
+                            onClick={() => { setBpBlueprintId(bp.id); setBpBlueprintData(bp); setBpVariables({}); }}
+                            className={`p-3 rounded-lg border-2 cursor-pointer transition-all flex items-start gap-3 ${bpBlueprintId === bp.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 mt-0.5">
+                              {isGlobal ? <Globe className="w-4 h-4 text-muted-foreground" /> : <Building2 className="w-4 h-4 text-muted-foreground" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium">{bp.name}</p>
+                              <p className="text-xs text-muted-foreground">{bp.structure?.modules?.length || 0} módulos · {totalLessons} lecciones</p>
+                              {bp.description && <p className="text-xs text-muted-foreground mt-0.5">{bp.description}</p>}
+                            </div>
+                            {bpBlueprintId === bp.id && <Check className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* BP Step 2: Fill variables */}
+              {bpStep === 2 && bpBlueprintData && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div>
+                      <h2 className="font-semibold text-lg mb-1">Configura las variables</h2>
+                      <p className="text-sm text-muted-foreground">
+                        Estas variables se sustituirán en todos los títulos del blueprint.
+                      </p>
+                    </div>
+                    {(bpBlueprintData.structure?.variables || []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-4 text-center">Este blueprint no tiene variables configurables.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {(bpBlueprintData.structure.variables as string[]).map((varName) => (
+                          <div key={varName}>
+                            <Label className="font-mono text-sm">{`{${varName}}`}</Label>
+                            <Input
+                              className="mt-1"
+                              placeholder={`Valor para ${varName}`}
+                              value={bpVariables[varName] || ""}
+                              onChange={(e) => setBpVariables((v) => ({ ...v, [varName]: e.target.value }))}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground">
+                      <p className="font-medium mb-1">Vista previa del primer módulo:</p>
+                      <p className="font-mono">
+                        {substituteVariables(bpBlueprintData.structure.modules[0]?.title_template || "", bpVariables)}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Blueprint footer */}
+          <div className="flex items-center justify-between">
+            <Button variant="ghost" onClick={() => bpStep > 0 ? setBpStep((s) => s - 1) : setStudioMode(null)} disabled={loading}>
+              <ArrowLeft className="w-4 h-4 mr-2" /> Atrás
+            </Button>
+            {progressMsg && (
+              <span className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> {progressMsg}
+              </span>
+            )}
+            {bpStep < 2 && (
+              <Button
+                onClick={() => setBpStep((s) => s + 1)}
+                disabled={bpStep === 0 ? !bpSourceId : !bpBlueprintId}
+                className="gradient-primary shadow-primary"
+              >
+                Siguiente <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            )}
+            {bpStep === 2 && (
+              <Button
+                onClick={runBlueprintGenerate}
+                disabled={loading}
+                className="gradient-primary shadow-primary"
+              >
+                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                Generar curso
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Stepper — solo en modo clásico */}
+      {studioMode === "classic" && <div className="flex items-center justify-between gap-2">
         {STEPS.map((label, i) => (
           <div key={label} className="flex items-center gap-2 flex-1">
             <div
@@ -616,9 +998,9 @@ export default function CourseStudio() {
             {i < STEPS.length - 1 && <div className="flex-1 h-px bg-border" />}
           </div>
         ))}
-      </div>
+      </div>}
 
-      <AnimatePresence mode="wait">
+      {studioMode === "classic" && <AnimatePresence mode="wait">
         <motion.div
           key={step}
           initial={{ opacity: 0, x: 10 }}
@@ -860,7 +1242,9 @@ export default function CourseStudio() {
                   <h3 className="font-semibold text-lg">Materializando el curso…</h3>
                   <p className="text-muted-foreground text-sm max-w-md mx-auto">{progressMsg}</p>
                   <Progress value={genProgress} className="max-w-md mx-auto" />
-                  <p className="text-xs text-muted-foreground">{genProgress}% completado</p>
+                  <p className="text-xs text-muted-foreground">
+                    {genProgress > 0 ? `${genProgress}% completado` : "Iniciando…"}
+                  </p>
                 </div>
 
                 {moduleStatuses.length > 0 && (
@@ -896,10 +1280,10 @@ export default function CourseStudio() {
             </Card>
           )}
         </motion.div>
-      </AnimatePresence>
+      </AnimatePresence>}
 
       {/* Footer actions */}
-      {step < 3 && (
+      {studioMode === "classic" && step < 3 && (
         <div className="flex items-center justify-between">
           <Button variant="ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0 || loading}>
             <ArrowLeft className="w-4 h-4 mr-2" /> Atrás

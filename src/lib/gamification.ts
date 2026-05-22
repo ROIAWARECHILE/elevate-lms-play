@@ -1,14 +1,13 @@
 import { supabase } from "@/integrations/supabase/client";
 
-function getLocalDate(date?: Date): string {
-  const d = date || new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export function getLocalDate(date?: Date): string {
+  return (date || new Date()).toISOString().split('T')[0];
 }
 
-function getYesterdayLocal(): string {
+export function getYesterdayLocal(): string {
   const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return getLocalDate(d);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().split('T')[0];
 }
 
 interface UpdateStreakAndLevelParams {
@@ -43,7 +42,10 @@ export async function updateStreakAndLevel({
   }
 
   const newXpTotal = (currentProfile.xp_total || 0) + xpEarned;
-  const newLevel = Math.floor(newXpTotal / 100) + 1;
+  // Curva exponencial: nivel N requiere 100*N^1.4 XP acumulado
+  const xpForLevel = (n: number) => Math.round(100 * Math.pow(n, 1.4));
+  let newLevel = 1;
+  while (xpForLevel(newLevel + 1) <= newXpTotal) newLevel++;
   const leveledUp = newLevel > (currentProfile.level || 1);
   const newLongestStreak = Math.max(newStreak, currentProfile.longest_streak || 0);
 

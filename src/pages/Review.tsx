@@ -37,20 +37,29 @@ export default function Review() {
   const [filter, setFilter] = useState<"pending" | "mastered" | "all">("pending");
   const [search, setSearch] = useState("");
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const PAGE_SIZE = 50;
 
-  const load = async () => {
+  const load = async (reset = true) => {
     if (!user) return;
     setLoading(true);
+    const currentOffset = reset ? 0 : offset;
     const { data } = await supabase
       .from("user_mistakes")
       .select("*")
       .eq("user_id", user.id)
-      .order("last_failed_at", { ascending: false });
-    setItems((data ?? []) as Mistake[]);
+      .order("last_failed_at", { ascending: false })
+      .range(currentOffset, currentOffset + PAGE_SIZE - 1);
+    const fetched = (data ?? []) as Mistake[];
+    setItems(reset ? fetched : (prev) => [...prev, ...fetched]);
+    setHasMore(fetched.length === PAGE_SIZE);
+    if (reset) setOffset(PAGE_SIZE);
+    else setOffset(currentOffset + PAGE_SIZE);
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [user?.id]);
+  useEffect(() => { load(true); }, [user?.id]);
 
   const filtered = useMemo(() => {
     return items
@@ -72,17 +81,17 @@ export default function Review() {
       })
       .eq("id", id);
     toast({ title: "¡Concepto dominado!", description: "Lo marcamos como aprendido." });
-    load();
+    load(true);
   };
 
   const markPending = async (id: string) => {
     await supabase.from("user_mistakes").update({ mastered: false }).eq("id", id);
-    load();
+    load(true);
   };
 
   const remove = async (id: string) => {
     await supabase.from("user_mistakes").delete().eq("id", id);
-    load();
+    load(true);
   };
 
   return (
@@ -199,6 +208,11 @@ export default function Review() {
               </Card>
             </motion.div>
           ))}
+          {hasMore && (
+            <Button variant="outline" className="w-full" onClick={() => load(false)} disabled={loading}>
+              {loading ? "Cargando..." : "Ver más"}
+            </Button>
+          )}
         </div>
       )}
     </div>

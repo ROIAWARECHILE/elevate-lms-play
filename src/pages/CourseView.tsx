@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useParams, Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, BookOpen, CheckCircle2, Clock, Zap, Brain, Lock, Crown, Trophy, Star } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, Clock, Zap, Brain, Lock, Crown, Trophy, Star, ScrollText, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { motion } from "framer-motion";
 import { Link as RouterLink } from "react-router-dom";
 import { CoursePathSkeleton } from "@/components/SkeletonLoaders";
 import { KibboExpression, KibboExpressionType } from "@/components/KibboExpression";
+import { StudyGuideModal } from "@/components/StudyGuideModal";
 
 interface Quiz {
   id: string;
@@ -34,9 +37,10 @@ type PathNode = {
   done: boolean;
   locked: boolean;
   link?: string;
+  lessonsRemaining?: number;
 };
 
-function CourseHeader({ course, totalLessons, progressPct }: { course: any; totalLessons: number; progressPct: number }) {
+function CourseHeader({ course, totalLessons, progressPct, remainingMinutes }: { course: any; totalLessons: number; progressPct: number; remainingMinutes: number }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -52,6 +56,11 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
         <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {course?.estimated_duration_minutes}min</span>
         <span className="flex items-center gap-1"><Zap className="w-4 h-4" /> {course?.xp_reward} XP</span>
         <span className="flex items-center gap-1"><BookOpen className="w-4 h-4" /> {totalLessons} lecciones</span>
+        {progressPct > 0 && progressPct < 100 && remainingMinutes > 0 && (
+          <span className="flex items-center gap-1 text-accent font-medium">
+            <Clock className="w-4 h-4" /> ~{remainingMinutes} min restantes
+          </span>
+        )}
       </div>
       <div className="mt-4">
         <div className="flex justify-between text-sm mb-1">
@@ -71,12 +80,15 @@ function CourseHeader({ course, totalLessons, progressPct }: { course: any; tota
   );
 }
 
-function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward }: {
+function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward, moduleId, hasProgress, onStudyGuide }: {
   title: string;
   description: string;
   moduleIndex: number;
   isCompleted: boolean;
   xpReward: number;
+  moduleId: string;
+  hasProgress: boolean;
+  onStudyGuide: (moduleId: string, moduleTitle: string) => void;
 }) {
   if (isCompleted) {
     return (
@@ -97,6 +109,12 @@ function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward }
         <div className="flex items-center justify-center gap-1 mt-1 text-xs text-xp font-semibold">
           <Zap className="w-3 h-3" /> +{xpReward} XP
         </div>
+        <button
+          onClick={() => onStudyGuide(moduleId, title)}
+          className="mt-2 inline-flex items-center gap-1.5 text-xs text-success/70 hover:text-success transition-colors"
+        >
+          <ScrollText className="w-3 h-3" /> Repasar guía
+        </button>
       </motion.div>
     );
   }
@@ -113,6 +131,14 @@ function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward }
       </div>
       <p className="text-sm font-bold">{title}</p>
       {description && <p className="text-xs text-navy-foreground/70 mt-0.5">{description}</p>}
+      {hasProgress && (
+        <button
+          onClick={() => onStudyGuide(moduleId, title)}
+          className="mt-2 inline-flex items-center gap-1.5 text-xs text-navy-foreground/60 hover:text-navy-foreground transition-colors"
+        >
+          <ScrollText className="w-3 h-3" /> Guía de repaso
+        </button>
+      )}
     </motion.div>
   );
 }
@@ -128,13 +154,26 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
   const showKibbo = isActive;
   const kibboSide = xOffset > 0 ? "left" : "right";
 
+  const lockedLabel = node.lessonsRemaining === 1
+    ? "Completa 1 lección más para desbloquear"
+    : `Completa ${node.lessonsRemaining ?? "las"} lecciones para desbloquear`;
+
   const nodeContent = node.locked ? (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center border-4 border-border opacity-50">
-        <Lock className="w-5 h-5 text-muted-foreground" />
-      </div>
-      <span className="text-[11px] text-muted-foreground/60 max-w-[100px] text-center truncate">{node.title}</span>
-    </div>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex flex-col items-center gap-1.5 cursor-help">
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center border-4 border-border opacity-50">
+              <Lock className="w-5 h-5 text-muted-foreground" />
+            </div>
+            <span className="text-[11px] text-muted-foreground/60 max-w-[100px] text-center truncate">{node.title}</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="right" className="max-w-[160px] text-center">
+          <p className="text-xs">{lockedLabel}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   ) : (
     <RouterLink to={node.link!} className="flex flex-col items-center gap-1.5 group">
       <div className="relative">
@@ -257,6 +296,11 @@ export default function CourseView() {
   const [completedQuizzes, setCompletedQuizzes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const activeNodeRef = useRef<HTMLDivElement>(null);
+  const [studyGuideModal, setStudyGuideModal] = useState<{ moduleId: string; title: string } | null>(null);
+
+  const openStudyGuide = useCallback((moduleId: string, moduleTitle: string) => {
+    setStudyGuideModal({ moduleId, title: moduleTitle });
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -321,6 +365,12 @@ export default function CourseView() {
 
   const totalLessons = modules.reduce((sum, m) => sum + m.lessons.length, 0);
   const progressPct = totalLessons > 0 ? (completedLessons.size / totalLessons) * 100 : 0;
+  // Tiempo estimado de lecciones no completadas (5 min por lección como fallback)
+  const remainingMinutes = modules.reduce((sum, m) =>
+    sum + m.lessons
+      .filter((l) => !completedLessons.has(l.id))
+      .reduce((s, l) => s + ((l as any).estimated_duration_minutes ?? 5), 0)
+  , 0);
 
   // Build path nodes grouped by module
   const pathNodes: PathNode[] = [];
@@ -340,6 +390,7 @@ export default function CourseView() {
     });
     if (mod.quiz) {
       const quizDone = completedQuizzes.has(mod.quiz.id);
+      const lessonsRemaining = mod.lessons.filter((l) => !completedLessons.has(l.id)).length;
       pathNodes.push({
         type: "quiz",
         id: mod.quiz.id,
@@ -349,6 +400,7 @@ export default function CourseView() {
         done: quizDone,
         locked: !allLessonsDone,
         link: allLessonsDone ? `/app/courses/${courseId}/quiz/${mod.quiz.id}` : undefined,
+        lessonsRemaining,
       });
     }
   });
@@ -388,6 +440,15 @@ export default function CourseView() {
   });
 
   return (
+    <ErrorBoundary context="vista del curso">
+    {studyGuideModal && (
+      <StudyGuideModal
+        moduleId={studyGuideModal.moduleId}
+        moduleTitle={studyGuideModal.title}
+        open={!!studyGuideModal}
+        onClose={() => setStudyGuideModal(null)}
+      />
+    )}
     <div className="max-w-2xl mx-auto space-y-6">
       <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
         <Link
@@ -398,13 +459,15 @@ export default function CourseView() {
         </Link>
       </motion.div>
 
-      <CourseHeader course={course} totalLessons={totalLessons} progressPct={progressPct} />
+      <CourseHeader course={course} totalLessons={totalLessons} progressPct={progressPct} remainingMinutes={remainingMinutes} />
 
       {/* Duolingo-style Path */}
       <div className="relative py-8 overflow-hidden">
         <div className="relative flex flex-col items-center gap-2">
           {renderItems.map((item, idx) => {
             if (item.type === "moduleHeader") {
+              const mod = modules[item.moduleIndex];
+              const hasProgress = mod.lessons.some((l) => completedLessons.has(l.id));
               return (
                 <div key={`mod-header-${item.moduleIndex}`} className="py-4 w-full">
                   <ModuleHeader
@@ -413,6 +476,9 @@ export default function CourseView() {
                     moduleIndex={item.moduleIndex}
                     isCompleted={item.isCompleted}
                     xpReward={item.xpReward}
+                    moduleId={mod.id}
+                    hasProgress={hasProgress}
+                    onStudyGuide={openStudyGuide}
                   />
                 </div>
               );
@@ -452,5 +518,6 @@ export default function CourseView() {
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

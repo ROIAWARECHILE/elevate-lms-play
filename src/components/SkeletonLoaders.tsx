@@ -72,3 +72,18 @@ export function CoursePathSkeleton() {
     </div>
   );
 }
+
+export function PageSkeleton() {
+  return (
+    <div className="space-y-6 p-6">
+      <div className="h-8 bg-muted rounded animate-pulse w-48" />
+      <div className="h-4 bg-muted rounded animate-pulse w-full" />
+      <div className="h-4 bg-muted rounded animate-pulse w-5/6" />
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-32 bg-muted rounded-lg animate-pulse" />
+        ))}
+      </div>
+    </div>
+  );
+}

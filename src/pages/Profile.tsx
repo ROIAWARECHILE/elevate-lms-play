@@ -2,19 +2,35 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
-import { Zap, Flame, Trophy, Award, BookOpen } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Zap, Flame, Trophy, Award, BookOpen, Pencil, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { AchievementsGrid } from "@/components/AchievementsGrid";
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Profile() {
-  const { user, profile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
+  const { toast } = useToast();
   const [completedCourses, setCompletedCourses] = useState(0);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editJob, setEditJob] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [xpHistory, setXpHistory] = useState<{ week: string; xp: number }[]>([]);
 
   const level = profile?.level || 1;
   const xpTotal = profile?.xp_total || 0;
-  const xpInCurrentLevel = xpTotal - ((level - 1) * 100);
-  const xpProgress = Math.min((xpInCurrentLevel / 100) * 100, 100);
+  const xpForLevel = (n: number) => Math.round(100 * Math.pow(n, 1.4));
+  const xpCurrentLevelStart = xpForLevel(level);
+  const xpNextLevel = xpForLevel(level + 1);
+  const xpInCurrentLevel = xpTotal - xpCurrentLevelStart;
+  const xpNeeded = xpNextLevel - xpCurrentLevelStart;
+  const xpProgress = Math.min((xpInCurrentLevel / xpNeeded) * 100, 100);
 
   useEffect(() => {
     if (!user) return;
@@ -34,6 +50,60 @@ export default function Profile() {
     fetchStats();
   }, [user]);
 
+  // XP histórico por semana (últimas 7 semanas)
+  useEffect(() => {
+    if (!user) return;
+    const fetchXpHistory = async () => {
+      const weeks: { week: string; xp: number }[] = [];
+      const now = new Date();
+      for (let w = 6; w >= 0; w--) {
+        const start = new Date(now);
+        start.setDate(now.getDate() - w * 7 - now.getDay());
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 7);
+
+        const { data } = await supabase
+          .from("user_xp_log")
+          .select("xp_amount")
+          .eq("user_id", user.id)
+          .gte("created_at", start.toISOString())
+          .lt("created_at", end.toISOString());
+
+        const total = (data ?? []).reduce((acc, r) => acc + (r.xp_amount ?? 0), 0);
+        const label = w === 0 ? "Esta sem." : `Sem -${w}`;
+        weeks.push({ week: label, xp: total });
+      }
+      setXpHistory(weeks);
+    };
+    fetchXpHistory();
+  }, [user]);
+
+  const openEdit = () => {
+    setEditName(profile?.full_name ?? "");
+    setEditJob(profile?.job_title ?? "");
+    setEditOpen(true);
+  };
+
+  const saveEdit = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ full_name: editName.trim(), job_title: editJob.trim() })
+        .eq("id", user.id);
+      if (error) throw error;
+      await refreshProfile();
+      setEditOpen(false);
+      toast({ title: "Perfil actualizado" });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const stats = [
     { label: "XP Total", value: xpTotal, icon: Zap, color: "text-xp", bg: "bg-xp/10" },
     { label: "Racha actual", value: profile?.current_streak || 0, icon: Flame, color: "text-streak", bg: "bg-streak/10", suffix: " días" },
@@ -41,10 +111,12 @@ export default function Profile() {
     { label: "Cursos completados", value: completedCourses, icon: BookOpen, color: "text-success", bg: "bg-success/10" },
   ];
 
+  const maxXp = Math.max(...xpHistory.map((h) => h.xp), 1);
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <motion.div
-        className="text-center"
+        className="text-center relative"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 300, damping: 25 }}
@@ -62,6 +134,14 @@ export default function Profile() {
         {profile?.job_title && (
           <p className="text-sm text-muted-foreground mt-1">{profile.job_title}</p>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-2 text-muted-foreground gap-1.5"
+          onClick={openEdit}
+        >
+          <Pencil className="w-3.5 h-3.5" /> Editar perfil
+        </Button>
       </motion.div>
 
       {/* Level Progress */}
@@ -74,7 +154,7 @@ export default function Profile() {
                 Nivel <AnimatedCounter value={level} duration={600} />
               </span>
               <span className="text-sm text-muted-foreground">
-                <AnimatedCounter value={xpInCurrentLevel} duration={600} /> / 100 XP
+                <AnimatedCounter value={xpInCurrentLevel} duration={600} /> / {xpNeeded} XP
               </span>
             </div>
             <div className="h-3 bg-muted rounded-full overflow-hidden">
@@ -116,9 +196,77 @@ export default function Profile() {
         ))}
       </div>
 
+      {/* XP Histórico */}
+      {xpHistory.some((h) => h.xp > 0) && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <Card className="shadow-card">
+            <CardContent className="p-5">
+              <p className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <Zap className="w-4 h-4 text-xp" /> XP últimas 7 semanas
+              </p>
+              <ResponsiveContainer width="100%" height={100}>
+                <BarChart data={xpHistory} barCategoryGap="20%">
+                  <XAxis dataKey="week" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}
+                    formatter={(v: number) => [`${v} XP`, ""]}
+                    labelStyle={{ display: "none" }}
+                  />
+                  <Bar dataKey="xp" radius={[4, 4, 0, 0]}>
+                    {xpHistory.map((entry, index) => (
+                      <Cell
+                        key={index}
+                        fill={entry.xp === maxXp ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
         <AchievementsGrid />
       </motion.div>
+
+      {/* Edit Modal */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Editar perfil</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-name">Nombre</Label>
+              <Input
+                id="edit-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Tu nombre"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-job">Cargo / Rol</Label>
+              <Input
+                id="edit-job"
+                value={editJob}
+                onChange={(e) => setEditJob(e.target.value)}
+                placeholder="Ej: Diseñadora UX"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditOpen(false)} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button onClick={saveEdit} disabled={saving || !editName.trim()} className="gradient-primary">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

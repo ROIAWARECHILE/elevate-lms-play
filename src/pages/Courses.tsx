@@ -36,17 +36,19 @@ export default function Courses() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!profile?.company_id) return;
     const fetchCourses = async () => {
       const { data } = await supabase
         .from("courses")
         .select("*")
         .eq("status", "published")
+        .eq("company_id", profile.company_id)
         .order("created_at", { ascending: false });
       if (data) setCourses(data as Course[]);
       setLoading(false);
     };
     fetchCourses();
-  }, []);
+  }, [profile?.company_id]);
 
   return (
     <div className="space-y-6">

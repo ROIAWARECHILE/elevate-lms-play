@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useHotkeys } from "react-hotkeys-hook";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ArrowLeft, CheckCircle2, Clock, Loader2, Sparkles, Zap } from "lucide-react";
 import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +25,7 @@ import { useDictionaryAutoIndex } from "@/hooks/useDictionaryAutoIndex";
 import { useSrsAutoSeed } from "@/hooks/useSrsAutoSeed";
 import { useSkillProfile } from "@/hooks/useSkillProfile";
 import { estimateLessonMinutes } from "@/lib/lessonDuration";
+import { LessonAudioPlayer } from "@/components/LessonAudioPlayer";
 
 export default function LessonView() {
   const { courseId, lessonId } = useParams();
@@ -35,12 +37,23 @@ export default function LessonView() {
   const [completed, setCompleted] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [lessonPosition, setLessonPosition] = useState<{ current: number; total: number } | null>(null);
   const [showXp, setShowXp] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [newLevel, setNewLevel] = useState(1);
   const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
+  const [showExitDialog, setShowExitDialog] = useState(false);
+  const [pendingBack, setPendingBack] = useState(false);
 
-  useHotkeys("left", () => navigate(-1), { preventDefault: true });
+  const handleBack = useCallback(() => {
+    if (!completed && !completing) {
+      setShowExitDialog(true);
+    } else {
+      navigate(`/app/courses/${courseId}`, { state: { restoreActiveNode: true } });
+    }
+  }, [completed, completing, navigate, courseId]);
+
+  useHotkeys("left", () => handleBack(), { preventDefault: true });
   useDictionaryAutoIndex(lesson, courseId);
   // Al completar la lección, sembramos sus conceptos/quizzes en el SRS del usuario.
   useSrsAutoSeed(lesson, courseId, completed);
@@ -61,7 +74,22 @@ export default function LessonView() {
               .maybeSingle()
           : Promise.resolve({ data: null }),
       ]);
-      if (lessonRes.data) setLesson(lessonRes.data);
+      if (lessonRes.data) {
+        setLesson(lessonRes.data);
+        // Calcular posición dentro del módulo
+        const moduleId = lessonRes.data.modules?.id;
+        if (moduleId) {
+          const { data: siblings } = await supabase
+            .from("lessons")
+            .select("id, sort_order")
+            .eq("module_id", moduleId)
+            .order("sort_order");
+          if (siblings) {
+            const idx = siblings.findIndex((s) => s.id === lessonId);
+            setLessonPosition({ current: idx + 1, total: siblings.length });
+          }
+        }
+      }
       setCompleted(!!progressRes.data);
       setLoading(false);
     };
@@ -119,6 +147,11 @@ export default function LessonView() {
       // Evaluate achievements
       const newly = await evaluateAchievements(user.id, profile.company_id!);
       if (newly.length > 0) setTimeout(() => setUnlocked(newly), 1500);
+
+      // Volver al curso automáticamente tras la celebración
+      setTimeout(() => {
+        navigate(`/app/courses/${courseId}`, { state: { restoreActiveNode: true }, replace: true });
+      }, result.leveledUp ? 4500 : 2500);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -134,14 +167,32 @@ export default function LessonView() {
       <LevelUpModal show={showLevelUp} level={newLevel} onClose={() => setShowLevelUp(false)} />
       <AchievementUnlockModal achievements={unlocked} onClose={() => setUnlocked([])} />
 
+      <AlertDialog open={showExitDialog} onOpenChange={setShowExitDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Salir de la lección?</AlertDialogTitle>
+            <AlertDialogDescription>
+              No has completado esta lección. Tu progreso en ella no se guardará si sales ahora.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Seguir aprendiendo</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => navigate(`/app/courses/${courseId}`, { state: { restoreActiveNode: true } })}
+            >
+              Salir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}>
-        <Link
-          to={`/app/courses/${courseId}`}
-          state={{ restoreActiveNode: true }}
+        <button
+          onClick={handleBack}
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4" /> Volver al curso
-        </Link>
+        </button>
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 300, damping: 25 }}>
@@ -160,6 +211,11 @@ export default function LessonView() {
                     <Clock className="w-3 h-3" /> {estimateLessonMinutes(lesson)} min
                   </Badge>
                 )}
+                {lessonPosition && (
+                  <Badge variant="outline" className="text-[10px] h-5 gap-1 border-muted-foreground/30">
+                    Lección {lessonPosition.current} de {lessonPosition.total}
+                  </Badge>
+                )}
                 {skill && skill.total_items >= 5 && (
                   <Badge variant="outline" className="text-[10px] h-5 gap-1 border-primary/40 text-primary">
                     <Sparkles className="w-3 h-3" />
@@ -175,6 +231,10 @@ export default function LessonView() {
               </div>
               <h1 className="text-2xl font-bold">{lesson?.title}</h1>
             </div>
+
+            {lesson && lesson.lesson_type !== "video_embed" && (
+              <LessonAudioPlayer lessonId={lesson.id} lessonType={lesson.lesson_type} />
+            )}
 
             <div className="mb-8">
               <LessonRenderer lesson={lesson} />

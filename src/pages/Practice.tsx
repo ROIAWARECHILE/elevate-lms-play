@@ -4,6 +4,7 @@
 // feedback inmediato, XP final. Se mezclan tipos de quiz y conceptos.
 // =====================================================================
 import { useEffect, useMemo, useState } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -26,7 +27,7 @@ const SESSION_SIZE = 8;
 const STARTING_LIVES = 3;
 const XP_PER_CORRECT = 5;
 
-type Phase = "loading" | "ready" | "playing" | "summary" | "empty";
+type Phase = "loading" | "ready" | "playing" | "summary" | "empty" | "error";
 
 export default function Practice() {
   const navigate = useNavigate();
@@ -41,23 +42,29 @@ export default function Practice() {
   const [lives, setLives] = useState(STARTING_LIVES);
   const [correctCount, setCorrectCount] = useState(0);
   const [xpEarned, setXpEarned] = useState(0);
+  const [livesBonus, setLivesBonus] = useState(0);
   const [startedAt, setStartedAt] = useState<number>(0);
 
   // ----- carga inicial -----
   const loadSession = async () => {
     setPhase("loading");
-    const due = await getDue(SESSION_SIZE);
-    if (due.length === 0) {
-      setPhase("empty");
-      return;
+    try {
+      const due = await getDue(SESSION_SIZE);
+      if (due.length === 0) {
+        setPhase("empty");
+        return;
+      }
+      setItems(due);
+      setIdx(0);
+      setLives(STARTING_LIVES);
+      setCorrectCount(0);
+      setXpEarned(0);
+      setLivesBonus(0);
+      setStartedAt(Date.now());
+      setPhase("ready");
+    } catch {
+      setPhase("error");
     }
-    setItems(due);
-    setIdx(0);
-    setLives(STARTING_LIVES);
-    setCorrectCount(0);
-    setXpEarned(0);
-    setStartedAt(Date.now());
-    setPhase("ready");
   };
 
   useEffect(() => {
@@ -106,24 +113,30 @@ export default function Practice() {
   };
 
   const endSession = async () => {
+    const bonus = lives >= 3 ? 10 : lives >= 2 ? 5 : 0;
+    const totalXp = xpEarned + bonus;
+    setLivesBonus(bonus);
     setPhase("summary");
-    if (xpEarned > 0 && user && profile?.company_id) {
+    if (totalXp > 0 && user) {
       try {
-        await supabase.rpc("record_practice_xp", { _xp: xpEarned });
-        const newXp = (profile.xp_total ?? 0) + xpEarned;
-        const newLevel = Math.floor(newXp / 100) + 1;
+        await supabase.rpc("record_practice_xp", { _xp: totalXp });
+        const newXp = (profile?.xp_total ?? 0) + totalXp;
+        const xpForLevel = (n: number) => Math.round(100 * Math.pow(n, 1.4));
+        let newLevel = 1;
+        while (xpForLevel(newLevel + 1) <= newXp) newLevel++;
         await supabase
           .from("profiles")
           .update({ xp_total: newXp, level: newLevel })
           .eq("id", user.id);
         await supabase.rpc("increment_quest_progress", {
           _quest_type: "xp",
-          _amount: xpEarned,
+          _amount: totalXp,
         });
         playXp();
         await refreshProfile();
       } catch (e) {
         console.warn("xp award failed", e);
+        toast({ title: "No se pudo guardar el XP", description: "Revisa tu conexión.", variant: "destructive" });
       }
     }
   };
@@ -186,6 +199,21 @@ export default function Practice() {
         </Card>
       )}
 
+      {phase === "error" && (
+        <Card>
+          <CardContent className="py-16 text-center space-y-3">
+            <XCircle className="w-12 h-12 mx-auto text-destructive" />
+            <h2 className="font-bold text-lg">Error al cargar la sesión</h2>
+            <p className="text-muted-foreground text-sm max-w-sm mx-auto">
+              No se pudieron cargar las tarjetas. Verifica tu conexión.
+            </p>
+            <Button onClick={loadSession} variant="outline">
+              <RefreshCw className="w-4 h-4 mr-2" /> Reintentar
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {phase === "ready" && (
         <Card className="overflow-hidden">
           <CardContent className="py-10 text-center space-y-4">
@@ -215,22 +243,24 @@ export default function Practice() {
       )}
 
       {phase === "playing" && items[idx] && (
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={items[idx].id}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
-          >
-            <ItemRunner
-              item={items[idx]}
-              startedAt={startedAt}
-              onAnswered={handleAnswer}
-              onNext={next}
-            />
-          </motion.div>
-        </AnimatePresence>
+        <ErrorBoundary context="pregunta de práctica" onReset={loadSession}>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={items[idx].id}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ItemRunner
+                item={items[idx]}
+                startedAt={startedAt}
+                onAnswered={handleAnswer}
+                onNext={next}
+              />
+            </motion.div>
+          </AnimatePresence>
+        </ErrorBoundary>
       )}
 
       {phase === "summary" && (
@@ -238,6 +268,7 @@ export default function Practice() {
           correct={correctCount}
           total={items.length}
           xp={xpEarned}
+          livesBonus={livesBonus}
           livesLeft={lives}
           onAgain={loadSession}
           onExit={() => navigate("/app")}
@@ -639,9 +670,9 @@ function OrderRecallItem({ item, answered, onFinish }: any) {
 // Resumen final
 // =====================================================================
 function Summary({
-  correct, total, xp, livesLeft, onAgain, onExit,
+  correct, total, xp, livesBonus, livesLeft, onAgain, onExit,
 }: {
-  correct: number; total: number; xp: number; livesLeft: number;
+  correct: number; total: number; xp: number; livesBonus: number; livesLeft: number;
   onAgain: () => void; onExit: () => void;
 }) {
   const pct = total ? Math.round((correct / total) * 100) : 0;
@@ -668,9 +699,18 @@ function Summary({
         </h2>
         <div className="grid grid-cols-3 gap-3 max-w-sm mx-auto">
           <Stat icon={CheckCircle2} value={`${correct}/${total}`} label="Aciertos" />
-          <Stat icon={Zap} value={`+${xp}`} label="XP ganado" />
+          <Stat icon={Zap} value={`+${xp + livesBonus}`} label="XP ganado" />
           <Stat icon={Heart} value={livesLeft} label="Vidas" />
         </div>
+        {livesBonus > 0 && (
+          <motion.p
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-sm text-success font-medium"
+          >
+            +{livesBonus} XP bonus por conservar vidas
+          </motion.p>
+        )}
         <p className="text-muted-foreground text-sm">
           Precisión: <b>{pct}%</b>
         </p>

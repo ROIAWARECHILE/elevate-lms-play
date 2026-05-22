@@ -230,7 +230,7 @@ const OUTLINE_TOOL = {
                       enum: [
                         "reading", "concept", "flashcards", "steps",
                         "comparison", "case_study", "interactive_quiz",
-                        "sop_walkthrough",
+                        "sop_walkthrough", "client_chat",
                       ],
                     },
                     evidence: {
@@ -280,12 +280,14 @@ const MATERIALIZE_QUIZ_TOOL = {
           type: "array",
           items: {
             type: "object",
-            required: ["question_text", "question_type", "options", "correct_answer"],
+            required: ["question_text", "question_type", "options", "correct_answer", "hint", "explanation"],
             properties: {
               question_text: { type: "string" },
               question_type: { type: "string", enum: ["multiple_choice", "true_false"] },
               options: { type: "array", items: { type: "string" } },
               correct_answer: { type: "string" },
+              hint: { type: "string", description: "Una pista que ayuda a razonar sin revelar la respuesta directamente. Máximo 1 oración." },
+              explanation: { type: "string", description: "Explicación de por qué la respuesta correcta es correcta. 1-2 frases claras y educativas." },
             },
           },
         },
@@ -400,6 +402,21 @@ const LESSON_BLOCK_HINTS: Record<string, string> = {
 - { "type":"sort_into_buckets","buckets":["A","B"],"items":[{"text":"x","bucket":"A"}] }
 - { "type":"highlight_terms","sentence":"...","terms":["..."] }
 - { "type":"tap_to_complete","sentence":"El ___ controla el ___.","bank":["a","b","c","d"],"correct":["a","b"] }`,
+  client_chat: `OBLIGATORIO generar exactamente en este orden:
+
+Bloque 1 — setup (ÚNICO):
+{ "type":"chat_setup","persona_name":"Ana López","persona_role":"Cliente interesado en renovar contrato","persona_mood":"neutral","context":"La cliente llama para preguntar sobre las condiciones de renovación antes de que venza su contrato en 30 días.","objective":"Retener a la cliente explicando los beneficios del plan actual y ofreciendo un descuento por fidelidad." }
+
+Bloques 2 a N — turnos conversacionales (mínimo 3, máximo 6):
+{ "type":"chat_turn","turn":1,"client_message":"Hola, quería saber si hay algún descuento por ser cliente fiel...","choices":[{"text":"Claro que sí, tenemos un 10% por renovación anticipada","quality":"good","score":3,"feedback":"Respuesta directa que abre la conversación con una propuesta concreta","client_reaction":"¡Qué bueno saberlo! ¿Cómo puedo aplicarlo?"},{"text":"Tendría que consultarlo con mi supervisor","quality":"neutral","score":1,"feedback":"No incorrecta pero genera incertidumbre innecesaria","client_reaction":"Mmm, bueno… ¿cuánto tardaría eso?"},{"text":"Los descuentos son solo para clientes nuevos","quality":"bad","score":0,"feedback":"Información incorrecta y desmotivadora para un cliente fiel","client_reaction":"Entiendo, creo que entonces busco otra alternativa..."}] }
+
+Último bloque — outcome (ÚNICO):
+{ "type":"chat_outcome","max_score":9,"thresholds":{"success":7,"partial":4},"messages":{"success":"Excelente manejo — el cliente renovó su contrato.","partial":"La cliente aceptó pensarlo. Mejorar proactividad y cierre.","failure":"La cliente colgó frustrada. Revisar tono y argumentos."},"tips":["Siempre confirmar que el cliente entendió el beneficio","Usar el nombre del cliente al menos dos veces","Ofrecer un siguiente paso concreto al final"] }
+
+REGLAS:
+- Cada chat_turn debe tener EXACTAMENTE 3 choices con quality "good"/"neutral"/"bad" y score 3/1/0.
+- max_score = número de turnos × 3.
+- El persona_mood debe reflejar el escenario real del brief.`,
 };
 
 async function stepMaterializeLesson(brief: any, moduleTitle: string, lesson: any) {
@@ -568,6 +585,12 @@ function buildFallbackBlocks(lesson: any, count: number): any[] {
       { type: "fill_blank", sentence: `${title} se apoya en ___.`, correct: "evidencia", explanation: answer },
       { type: "highlight_terms", sentence: `${title} requiere seguimiento, medición y mejora continua.`, terms: ["seguimiento", "medición", "mejora continua"] },
     );
+  } else if (t === "client_chat") {
+    const ctx = evidence[0] || objective || title;
+    out.push({ type: "chat_setup", persona_name: "Cliente", persona_role: title, persona_mood: "neutral", context: ctx, objective: objective || title });
+    out.push({ type: "chat_turn", turn: 1, client_message: `¿Cómo funciona ${title}?`, choices: [{ text: "Le explico con detalle los beneficios.", quality: "good", score: 3, feedback: "Respuesta proactiva y clara." }, { text: "Eso depende de varios factores.", quality: "neutral", score: 1, feedback: "Vaga pero no incorrecta." }, { text: "No tengo esa información.", quality: "bad", score: 0, feedback: "Deja al cliente sin respuesta." }] });
+    out.push({ type: "chat_turn", turn: 2, client_message: `¿Hay algo más que deba saber sobre ${title}?`, choices: [{ text: "Sí, hay puntos clave que le explico.", quality: "good", score: 3, feedback: "Demuestra conocimiento y disposición." }, { text: "Puede consultarlo en nuestra web.", quality: "neutral", score: 1, feedback: "Redirige sin resolver directamente." }, { text: "No creo que haya más.", quality: "bad", score: 0, feedback: "Cierra la conversación sin añadir valor." }] });
+    out.push({ type: "chat_outcome", max_score: 6, thresholds: { success: 5, partial: 3 }, messages: { success: "¡Excelente manejo de la conversación!", partial: "Buen intento, con margen de mejora.", failure: "El cliente quedó insatisfecho. Repasa los conceptos." }, tips: [`Conoce bien ${title} antes de atender`, "Escucha activamente al cliente", "Cierra con un paso concreto"] });
   } else {
     return [];
   }
@@ -578,9 +601,13 @@ async function stepMaterializeQuiz(brief: any, moduleTitle: string, lessons: any
   const text = `Genera 4-6 preguntas de quiz para el módulo "${moduleTitle}".
 Brief: ${JSON.stringify(brief).slice(0, 8_000)}
 Lecciones del módulo: ${lessons.map((l) => `"${l.title}"`).join(", ")}
+Reglas:
 - Mezcla multiple_choice (4 opciones) y true_false.
 - correct_answer EXACTO a una opción.
-- Español.`;
+- Español.
+- OBLIGATORIO para cada pregunta:
+  - hint: pista que ayuda a razonar (máx 1 oración, NO revela la respuesta directamente)
+  - explanation: por qué la respuesta es correcta (1-2 frases educativas y claras)`;
   const result = await callAi([{ role: "user", content: [{ type: "text", text }] }], MATERIALIZE_QUIZ_TOOL, {
     temperature: 0.5,
     maxTokens: 4000,
@@ -761,6 +788,8 @@ Deno.serve(async (req) => {
               question_type: q.question_type || "multiple_choice",
               options: q.options || [],
               correct_answer: q.correct_answer,
+              hint: q.hint ?? null,
+              explanation: q.explanation ?? null,
               sort_order: qi,
             }));
             await supabase.from("questions").insert(qRows);
@@ -771,51 +800,6 @@ Deno.serve(async (req) => {
         console.error("Quiz materialize failed:", mod.title, e);
       }
       return json({ ok: true, deleted: false, quizCreated: false });
-    }
-
-    // Wrapper deprecated para clientes viejos
-    if (mode === "materialize_module") {
-      const { moduleId, moduleIndex } = body;
-      if (moduleId == null || moduleIndex == null || !brief || !outline) {
-        return json({ error: "Missing fields for materialize_module" }, 400);
-      }
-      const mod = outline.modules?.[moduleIndex];
-      const lessons = mod?.lessons || [];
-      let inserted = 0; let skipped = 0;
-      for (let li = 0; li < lessons.length; li++) {
-        try {
-          const r = await fetch(req.url, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: req.headers.get("Authorization") || "",
-              apikey: req.headers.get("apikey") || "",
-            },
-            body: JSON.stringify({
-              mode: "materialize_lesson",
-              companyId, userId, brief, outline,
-              moduleId, moduleIndex, lessonIndex: li, sortOrder: inserted,
-            }),
-          });
-          const d = await r.json().catch(() => ({}));
-          if (d?.inserted) inserted += 1; else skipped += 1;
-        } catch { skipped += 1; }
-      }
-      try {
-        await fetch(req.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: req.headers.get("Authorization") || "",
-            apikey: req.headers.get("apikey") || "",
-          },
-          body: JSON.stringify({
-            mode: "materialize_module_quiz",
-            companyId, userId, brief, outline, moduleId, moduleIndex,
-          }),
-        });
-      } catch { /* ignore */ }
-      return json({ ok: true, inserted, skipped, deprecated: true });
     }
 
     if (mode === "materialize_finalize") {
@@ -860,12 +844,6 @@ Deno.serve(async (req) => {
       const updatePayload: any = {
         xp_reward: xpReward,
         estimated_duration_minutes: estimatedDuration,
-      };
-      // Persistimos calidad dentro de source_brief para no requerir migración.
-      const { data: existing } = await supabase
-        .from("courses").select("source_brief").eq("id", courseId).single();
-      const newBrief = {
-        ...(existing?.source_brief || {}),
         generation_quality: {
           status: audit.qualityStatus,
           validModules: audit.validModules,
@@ -877,21 +855,29 @@ Deno.serve(async (req) => {
           audited_at: new Date().toISOString(),
         },
       };
-      updatePayload.source_brief = newBrief;
       await supabase.from("courses").update(updatePayload).eq("id", courseId);
+
+      // Persistir reporte de calidad para histórico y A/B testing de prompts
+      await supabase.from("course_quality_reports").insert({
+        course_id: courseId,
+        status: audit.qualityStatus,
+        report: {
+          validModules: audit.validModules,
+          totalModules: audit.totalModules,
+          totalValidLessons: audit.totalValidLessons,
+          totalLessons: audit.totalLessons,
+          warnings: audit.warnings.slice(0, 20),
+          errors: audit.errors.slice(0, 20),
+        },
+      }).then(({ error: rErr }) => {
+        if (rErr) console.warn("quality_reports insert failed:", rErr.message);
+      });
 
       return json({
         ok: audit.qualityStatus !== "failed",
         qualityStatus: audit.qualityStatus,
         report: audit,
       });
-    }
-
-    // Legacy single-shot ahora deshabilitado: forzamos a usar Course Studio.
-    if (mode === "materialize" || (!mode && (body.pdfBase64 || body.imageBase64s || body.instructions))) {
-      return json({
-        error: "El flujo legacy de generación está deshabilitado. Usá Course Studio (/app/admin/courses/studio) para crear cursos con validación de calidad.",
-      }, 400);
     }
 
     return json({ error: `Unknown mode: ${mode || "(none)"}` }, 400);

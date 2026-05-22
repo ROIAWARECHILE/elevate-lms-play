@@ -13,7 +13,8 @@ export type LessonType =
   | "case_study"
   | "interactive_quiz"
   | "video_embed"
-  | "sop_walkthrough";
+  | "sop_walkthrough"
+  | "client_chat";
 
 // ---------- Bloques de cada tipo ----------
 
@@ -134,6 +135,47 @@ export type VideoBlock = {
   title?: string;
 };
 
+// ---------- Chat con el Cliente (simulación de conversación) ----------
+
+export type ChatSetupBlock = {
+  type: "chat_setup";
+  persona_name: string;
+  persona_role: string;
+  persona_mood: "neutral" | "frustrated" | "happy" | "confused" | "demanding";
+  context: string;
+  objective: string;
+};
+
+export type ChatTurnBlock = {
+  type: "chat_turn";
+  turn: number;
+  client_message: string;
+  choices: Array<{
+    text: string;
+    quality: "good" | "neutral" | "bad";
+    score: number;
+    feedback: string;
+    client_reaction?: string;
+  }>;
+};
+
+export type ChatOutcomeBlock = {
+  type: "chat_outcome";
+  max_score: number;
+  thresholds: {
+    success: number;
+    partial: number;
+  };
+  messages: {
+    success: string;
+    partial: string;
+    failure: string;
+  };
+  tips: string[];
+};
+
+export type ChatSimBlock = ChatSetupBlock | ChatTurnBlock | ChatOutcomeBlock;
+
 export type LessonBlock =
   | ReadingBlock
   | ConceptBlock
@@ -143,7 +185,8 @@ export type LessonBlock =
   | CaseStudyBlock
   | InteractiveQuizBlock
   | VideoBlock
-  | SopStepBlock;
+  | SopStepBlock
+  | ChatSimBlock;
 
 export interface LessonContent {
   blocks: LessonBlock[];
@@ -165,6 +208,7 @@ export const LESSON_TYPE_META: Record<
   interactive_quiz: { label: "Práctica", icon: "Brain", description: "Mini-ejercicios interactivos tipo Duolingo" },
   video_embed: { label: "Video", icon: "Video", description: "Video externo embebido" },
   sop_walkthrough: { label: "Procedimiento", icon: "ClipboardCheck", description: "Paso a paso operativo con tildes obligatorias" },
+  client_chat: { label: "Chat cliente", icon: "MessageSquare", description: "Simulación de conversación con un cliente" },
 };
 
 export function getLessonTypeMeta(type?: string | null) {

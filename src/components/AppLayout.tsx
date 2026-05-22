@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/CommandPalette";
+import { VoiceAgentButton } from "@/components/VoiceAgent";
 import { useGoToShortcuts } from "@/hooks/useGoToShortcuts";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -129,6 +130,7 @@ export function AppLayout() {
           </main>
         </div>
         {isMobile && <BottomTabBar />}
+        <VoiceAgentButton />
       </div>
     </SidebarProvider>
   );

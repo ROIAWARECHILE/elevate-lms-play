@@ -11,6 +11,8 @@ export function useSoundEffects() {
   const playWrong = useCallback(() => audioEngine.play("wrong"), []);
   const playXp = useCallback(() => audioEngine.play("xp"), []);
   const playModuleComplete = useCallback(() => audioEngine.play("moduleComplete"), []);
+  const playQuizPass = useCallback(() => audioEngine.play("quizPass"), []);
+  const playQuizFail = useCallback(() => audioEngine.play("quizFail"), []);
 
-  return { playCorrect, playWrong, playXp, playModuleComplete };
+  return { playCorrect, playWrong, playXp, playModuleComplete, playQuizPass, playQuizFail };
 }

@@ -54,7 +54,8 @@ export function DailyQuestsWidget() {
         .from("daily_quests")
         .update({ claimed: true })
         .eq("id", quest.id)
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .eq("company_id", profile.company_id);
       if (updErr) throw updErr;
 
       // Award XP
@@ -66,7 +67,9 @@ export function DailyQuestsWidget() {
         source_id: null,
       });
       const newXp = (profile.xp_total || 0) + quest.xp_reward;
-      const newLevel = Math.floor(newXp / 100) + 1;
+      const xpForLevel = (n: number) => Math.round(100 * Math.pow(n, 1.4));
+      let newLevel = 1;
+      while (xpForLevel(newLevel + 1) <= newXp) newLevel++;
       await supabase.from("profiles").update({ xp_total: newXp, level: newLevel }).eq("id", user.id);
 
       setQuests((qs) => qs.map((q) => (q.id === quest.id ? { ...q, claimed: true } : q)));

@@ -108,6 +108,20 @@ export function useSrsAutoSeed(
           courseId, lessonId,
         });
       }
+      // Flashcards: se convierten a tarjetas term para el SRS
+      if (b.type === "flashcard" && b.front && b.back) {
+        items.push({
+          itemType: "concept",
+          itemKey: srsKey(["fc", b.front, b.back]),
+          payload: {
+            kind: "term",
+            question: b.front,
+            answer: b.back,
+            hint: b.hint,
+          },
+          courseId, lessonId,
+        });
+      }
     }
 
     if (items.length > 0) {

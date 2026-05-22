@@ -15,6 +15,7 @@ export const MIN_BLOCKS_BY_TYPE: Record<string, number> = {
   interactive_quiz: 4,
   sop_walkthrough: 3,
   video_embed: 1,
+  client_chat: 4,
 };
 
 const QUIZ_BLOCK_TYPES = [
@@ -67,6 +68,22 @@ export function sanitizeBlock(lessonType: string, raw: any): any | null {
   }
   if (lessonType === "video_embed") {
     return t === "video" && nonEmptyStr(raw.url) ? raw : null;
+  }
+  if (lessonType === "client_chat") {
+    if (t === "chat_setup") {
+      return nonEmptyStr(raw.persona_name) && nonEmptyStr(raw.context) && nonEmptyStr(raw.objective) ? raw : null;
+    }
+    if (t === "chat_turn") {
+      if (!nonEmptyStr(raw.client_message)) return null;
+      const choices = Array.isArray(raw.choices)
+        ? raw.choices.filter((c: any) => nonEmptyStr(c?.text) && nonEmptyStr(c?.quality) && nonEmptyStr(c?.feedback))
+        : [];
+      return choices.length >= 2 ? raw : null;
+    }
+    if (t === "chat_outcome") {
+      return raw.messages && nonEmptyStr(raw.messages?.success) && nonEmptyStr(raw.messages?.partial) && nonEmptyStr(raw.messages?.failure) ? raw : null;
+    }
+    return null;
   }
   if (lessonType === "interactive_quiz") {
     if (!QUIZ_BLOCK_TYPES.includes(t)) return null;

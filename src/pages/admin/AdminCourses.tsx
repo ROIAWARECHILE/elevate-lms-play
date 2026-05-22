@@ -18,7 +18,14 @@ interface Course {
   estimated_duration_minutes: number;
   xp_reward: number;
   created_at: string;
+  generation_quality?: { status: string } | null;
 }
+
+const qualityConfig: Record<string, { label: string; className: string }> = {
+  valid: { label: "Calidad: OK", className: "bg-green-100 text-green-800 border border-green-200 hover:bg-green-100" },
+  needs_review: { label: "Revisar", className: "bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100" },
+  failed: { label: "Falló", className: "bg-red-100 text-red-800 border border-red-200 hover:bg-red-100" },
+};
 
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {
   draft: { label: "Borrador", variant: "secondary" },
@@ -159,11 +166,16 @@ export default function AdminCourses() {
                       <Link to={`/app/admin/courses/${course.id}`} className="font-semibold hover:text-primary transition-colors">
                         {course.title}
                       </Link>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <Badge {...statusConfig[course.status]} className="text-xs">
                           {statusConfig[course.status]?.label}
                         </Badge>
-                        <span className="flex items-center gap-1">
+                        {course.generation_quality?.status && qualityConfig[course.generation_quality.status] && (
+                          <Badge className={`text-[10px] h-5 ${qualityConfig[course.generation_quality.status].className}`}>
+                            {qualityConfig[course.generation_quality.status].label}
+                          </Badge>
+                        )}
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Clock className="w-3 h-3" /> {course.estimated_duration_minutes}min
                         </span>
                       </div>

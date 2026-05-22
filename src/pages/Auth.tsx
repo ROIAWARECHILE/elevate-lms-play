@@ -10,55 +10,80 @@ import { KibboExpression } from "@/components/KibboExpression";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { APP_URL } from "@/lib/constants";
+import { motion } from "framer-motion";
 
 function RoleChoiceScreen() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const firstName = user?.user_metadata?.full_name?.split(" ")[0] || null;
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative">
       <div className="absolute inset-0 gradient-hero opacity-5" />
       <div className="w-full max-w-md relative z-10">
-        <Card className="shadow-elevated border-border">
-          <CardHeader className="text-center pb-4">
-            <div className="flex justify-center mb-4">
-              <KibboExpression expression="excited" className="w-20 h-20" />
-            </div>
-            <CardTitle className="text-2xl font-bold">¿Cómo quieres usar Kibbo?</CardTitle>
-            <CardDescription>Elige tu rol para continuar</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Button
-              onClick={() => navigate("/onboarding")}
-              variant="outline"
-              className="w-full h-auto p-4 flex items-start gap-4 text-left"
-            >
-              <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0">
-                <Building2 className="w-6 h-6 text-primary-foreground" />
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          <Card className="shadow-elevated border-border">
+            <CardHeader className="text-center pb-4">
+              <div className="flex justify-center mb-4">
+                <KibboExpression expression="excited" className="w-24 h-24" />
               </div>
-              <div>
-                <p className="font-semibold text-foreground">Soy empresa</p>
-                <p className="text-sm text-muted-foreground font-normal">
-                  Quiero crear mi workspace y capacitar a mi equipo
-                </p>
-              </div>
-            </Button>
-            <Button
-              onClick={() => navigate("/join")}
-              variant="outline"
-              className="w-full h-auto p-4 flex items-start gap-4 text-left"
-            >
-              <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
-                <Users className="w-6 h-6 text-accent-foreground" />
-              </div>
-              <div>
-                <p className="font-semibold text-foreground">Soy colaborador</p>
-                <p className="text-sm text-muted-foreground font-normal">
-                  Tengo un código de invitación de mi empresa
-                </p>
-              </div>
-            </Button>
-          </CardContent>
-        </Card>
+              <CardTitle className="text-2xl font-bold">
+                {firstName ? `¡Hola, ${firstName}!` : "¡Bienvenido a Kibbo!"}
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                Tu cuenta está confirmada. Ahora dinos cómo quieres usar la plataforma.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <motion.div
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.15, duration: 0.3 }}
+              >
+                <Button
+                  onClick={() => navigate("/onboarding")}
+                  variant="outline"
+                  className="w-full h-auto p-4 flex items-start gap-4 text-left hover:border-primary/50 hover:bg-primary/5 transition-colors"
+                >
+                  <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center shrink-0">
+                    <Building2 className="w-6 h-6 text-primary-foreground" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">Soy empresa</p>
+                    <p className="text-sm text-muted-foreground font-normal">
+                      Quiero crear mi workspace y capacitar a mi equipo
+                    </p>
+                  </div>
+                </Button>
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.25, duration: 0.3 }}
+              >
+                <Button
+                  onClick={() => navigate("/join")}
+                  variant="outline"
+                  className="w-full h-auto p-4 flex items-start gap-4 text-left hover:border-accent/50 hover:bg-accent/5 transition-colors"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
+                    <Users className="w-6 h-6 text-accent-foreground" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">Soy colaborador</p>
+                    <p className="text-sm text-muted-foreground font-normal">
+                      Tengo un código de invitación de mi empresa
+                    </p>
+                  </div>
+                </Button>
+              </motion.div>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
     </div>
   );
@@ -70,25 +95,38 @@ function EmailConfirmationScreen({ email, onBackToLogin }: { email: string; onBa
     <div className="min-h-screen flex items-center justify-center px-4 relative">
       <div className="absolute inset-0 gradient-hero opacity-5" />
       <div className="w-full max-w-md relative z-10">
-        <Card className="shadow-elevated border-border">
-          <CardHeader className="text-center pb-4">
-            <div className="flex justify-center mb-4">
-              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-                <MailCheck className="w-8 h-8 text-primary" />
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          <Card className="shadow-elevated border-border">
+            <CardHeader className="text-center pb-4">
+              <div className="flex justify-center mb-4">
+                <KibboExpression expression="excited" className="w-24 h-24" />
               </div>
-            </div>
-            <CardTitle className="text-2xl font-bold">Confirma tu correo</CardTitle>
-            <CardDescription>
-              Enviamos un enlace de confirmación a <span className="font-medium text-foreground">{email}</span>.
-              Después de confirmarlo, vuelve e inicia sesión para elegir si eres empresa o colaborador.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={onBackToLogin} className="w-full gradient-primary shadow-primary h-11">
-              Ir a iniciar sesión
-            </Button>
-          </CardContent>
-        </Card>
+              <CardTitle className="text-2xl font-bold">Revisa tu correo</CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                Enviamos un enlace de confirmación a{" "}
+                <span className="font-semibold text-foreground">{email}</span>.
+                <br />Haz clic en el enlace para activar tu cuenta.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-lg bg-muted/60 border border-border px-4 py-3 text-sm text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground">¿No lo encuentras?</p>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>Revisa la carpeta de <strong>Spam</strong> o <strong>Correo no deseado</strong></li>
+                  <li>El remitente es <strong>noreply@kibbolearn.online</strong></li>
+                  <li>El enlace expira en <strong>24 horas</strong></li>
+                </ul>
+              </div>
+              <Button onClick={onBackToLogin} className="w-full gradient-primary shadow-primary h-11">
+                Ya confirmé, ir a iniciar sesión
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
     </div>
   );

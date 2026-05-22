@@ -5,6 +5,7 @@
 // =====================================================================
 
 import { getLessonBlocks, type LessonType, type LessonBlock } from "@/lib/courseSchema";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ReadingRunner } from "./runners/ReadingRunner";
 import { ConceptRunner } from "./runners/ConceptRunner";
 import { FlashcardsRunner } from "./runners/FlashcardsRunner";
@@ -14,6 +15,7 @@ import { CaseStudyRunner } from "./runners/CaseStudyRunner";
 import { InteractiveQuizRunner } from "./runners/InteractiveQuizRunner";
 import { VideoRunner } from "./runners/VideoRunner";
 import { SOPWalkthroughRunner } from "./runners/SOPWalkthroughRunner";
+import { ClientChatRunner } from "./runners/ClientChatRunner";
 
 interface Props {
   lesson: { lesson_type?: string | null; content?: any };
@@ -23,6 +25,14 @@ export function LessonRenderer({ lesson }: Props) {
   const type = (lesson.lesson_type as LessonType) || "reading";
   const blocks = getLessonBlocks(lesson) as LessonBlock[];
 
+  return (
+    <ErrorBoundary context="lección" onReset={() => window.location.reload()}>
+      {renderLesson(type, blocks, lesson)}
+    </ErrorBoundary>
+  );
+}
+
+function renderLesson(type: LessonType, blocks: LessonBlock[], lesson: { content?: any }) {
   switch (type) {
     case "concept":
       return <ConceptRunner blocks={blocks.filter((b) => b.type === "term") as any} />;
@@ -63,6 +73,16 @@ export function LessonRenderer({ lesson }: Props) {
           blocks={blocks.filter((b) => b.type === "sop_step") as any}
         />
       );
+    case "client_chat":
+      return (
+        <ClientChatRunner
+          blocks={
+            blocks.filter((b) =>
+              b.type === "chat_setup" || b.type === "chat_turn" || b.type === "chat_outcome"
+            ) as any
+          }
+        />
+      );
     case "video_embed": {
       const v = blocks.find((b) => b.type === "video") as any;
       return <VideoRunner block={v} />;
@@ -84,3 +104,4 @@ export function LessonRenderer({ lesson }: Props) {
       );
   }
 }
+

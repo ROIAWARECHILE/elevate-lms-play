@@ -1,6 +1,7 @@
 import {
   LayoutDashboard, BookOpen, Trophy, User, Settings,
-  Users, BarChart3, Sparkles, LogOut, Zap, Flame, RefreshCw, BookMarked, Brain
+  Users, BarChart3, Sparkles, LogOut, Zap, Flame, RefreshCw, BookMarked, Brain,
+  Database, Layers,
 } from "lucide-react";
 import kibboLogo from "@/assets/kibbo-mascot.png";
 import { NavLink } from "@/components/NavLink";
@@ -36,6 +37,8 @@ const adminItems = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard, walkthrough: "nav-dashboard" },
   { title: "Gestionar Cursos", url: "/app/admin/courses", icon: BookOpen, walkthrough: "nav-admin-courses" },
   { title: "Crear con IA", url: "/app/admin/courses/studio", icon: Sparkles, walkthrough: "nav-create-course" },
+  { title: "Librería fuentes", url: "/app/admin/sources", icon: Database },
+  { title: "Blueprints", url: "/app/admin/blueprints", icon: Layers },
   { title: "Usuarios", url: "/app/admin/users", icon: Users },
   { title: "Analytics", url: "/app/admin/analytics", icon: BarChart3 },
   { title: "Práctica diaria", url: "/app/practice", icon: Brain, badgeKey: "due" },
