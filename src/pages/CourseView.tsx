@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { motion } from "framer-motion";
 import { Link as RouterLink } from "react-router-dom";
 import { CoursePathSkeleton } from "@/components/SkeletonLoaders";
+import { useLessonMastery } from "@/hooks/useSRS";
 import { KibboExpression, KibboExpressionType } from "@/components/KibboExpression";
 import { StudyGuideModal } from "@/components/StudyGuideModal";
 
@@ -143,6 +144,19 @@ function ModuleHeader({ title, description, moduleIndex, isCompleted, xpReward, 
   );
 }
 
+function LessonMasteryDot({ lessonId }: { lessonId: string }) {
+  const { data: mastery } = useLessonMastery(lessonId);
+  if (mastery === null || mastery === undefined) return null;
+  const color = mastery >= 0.8 ? "bg-success" : mastery >= 0.5 ? "bg-yellow-400" : "bg-destructive";
+  const label = mastery >= 0.8 ? "Dominado" : mastery >= 0.5 ? "En progreso" : "Débil";
+  return (
+    <div className="flex items-center justify-center gap-1 mt-0.5">
+      <span className={`w-1.5 h-1.5 rounded-full ${color}`} />
+      <span className="text-[9px] text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
 function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
   node: PathNode;
   isActive: boolean;
@@ -202,6 +216,9 @@ function PathNodeComponent({ node, isActive, index, xOffset, activeIndex }: {
       }`}>
         {node.title}
       </span>
+      {node.done && node.type === "lesson" && (
+        <LessonMasteryDot lessonId={node.id} />
+      )}
       {isActive && (
         <motion.span
           initial={{ opacity: 0, y: -4 }}

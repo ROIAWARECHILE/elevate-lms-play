@@ -2,6 +2,7 @@
 // useSRS — repetición espaciada (cliente)
 // =====================================================================
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -19,20 +20,32 @@ export function srsKey(parts: (string | undefined | null)[]): string {
   return "k_" + (h >>> 0).toString(36);
 }
 
-/** Convierte una respuesta del usuario en quality SM-2 (0..5). */
+export type Confidence = "low" | "medium" | "high";
+
+/**
+ * Convierte una respuesta del usuario en quality SM-2 (0..5).
+ * Con `confidence` aplica metacognición: sobreconfianza penalizada
+ * (Kahneman/Dunning-Kruger), baja confianza no penalizada (Bjork 1994).
+ */
 export function quality({
   correct,
   hadHint = false,
   attempts = 1,
   timeMs,
+  confidence,
 }: {
   correct: boolean;
   hadHint?: boolean;
   attempts?: number;
   timeMs?: number;
+  confidence?: Confidence;
 }): number {
-  if (!correct && attempts >= 2) return 0;
-  if (!correct) return 2;
+  if (!correct) {
+    if (confidence === "high") return 0;   // sobreconfianza penalizada fuertemente
+    if (confidence === "medium") return 1;
+    if (attempts >= 2) return 0;
+    return 2;
+  }
   // Correcto:
   if (hadHint) return 3;
   if (attempts > 1) return 3;
@@ -120,6 +133,29 @@ export function useSRS() {
   }, [user]);
 
   return { enqueue, enqueueMany, review, getDue };
+}
+
+/**
+ * Devuelve la fuerza de memoria promedio (0..1) de los ítems SRS de una lección.
+ * null = sin ítems SRS todavía.
+ * Implementa Mastery Learning (Bloom 1968): visible en CourseView.
+ */
+export function useLessonMastery(lessonId: string | null | undefined) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["srs-mastery", lessonId, user?.id],
+    enabled: !!user && !!lessonId,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("srs_items")
+        .select("strength")
+        .eq("user_id", user!.id)
+        .eq("lesson_id", lessonId!);
+      if (error || !data?.length) return null;
+      return data.reduce((s, i) => s + i.strength, 0) / data.length;
+    },
+  });
 }
 
 /** Devuelve cuántas tarjetas vencidas hay para el usuario (poll cada 60s). */

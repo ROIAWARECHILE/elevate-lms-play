@@ -13,12 +13,12 @@ const corsHeaders = {
 };
 
 function getAiConfig() {
-  const API_KEY = Deno.env.get("GEMINI_API_KEY");
-  if (!API_KEY) throw new Error("GEMINI_API_KEY not configured");
+  const API_KEY = Deno.env.get("OPENAI_API_KEY");
+  if (!API_KEY) throw new Error("OPENAI_API_KEY not configured");
   return {
     apiKey: API_KEY,
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-2.5-flash",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: Deno.env.get("OPENAI_MODEL") || "gpt-4o",
   };
 }
 

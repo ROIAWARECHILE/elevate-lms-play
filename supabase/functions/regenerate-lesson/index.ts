@@ -22,12 +22,12 @@ const LESSON_TYPES = [
 ] as const;
 
 function getAi() {
-  const key = Deno.env.get("GEMINI_API_KEY");
-  if (!key) throw new Error("GEMINI_API_KEY not configured");
+  const key = Deno.env.get("OPENAI_API_KEY");
+  if (!key) throw new Error("OPENAI_API_KEY not configured");
   return {
     apiKey: key,
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: Deno.env.get("OPENAI_MODEL") || "gpt-4o",
   };
 }
 
@@ -84,12 +84,12 @@ async function callAi(messages: any[], opts: { temperature?: number } = {}) {
     const t = await res.text();
     if (res.status === 429 && attempt < maxRetries) {
       lastErr = new Error("rate limited");
-      await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
       continue;
     }
-    if (res.status === 429) throw new Error("Rate limit excedido en Gemini. Espera ~1 minuto y reintenta, o usa una API key con plan de pago.");
-    if (res.status === 401 || res.status === 403) throw new Error("GEMINI_API_KEY inválida.");
-    throw new Error(`Gemini error ${res.status}: ${t.slice(0, 300)}`);
+    if (res.status === 429) throw new Error("Rate limit excedido en OpenAI. Espera unos segundos y reintenta.");
+    if (res.status === 401 || res.status === 403) throw new Error("OPENAI_API_KEY inválida. Verifícala en platform.openai.com.");
+    throw new Error(`OpenAI error ${res.status}: ${t.slice(0, 300)}`);
   }
   throw lastErr || new Error("AI call failed");
 }

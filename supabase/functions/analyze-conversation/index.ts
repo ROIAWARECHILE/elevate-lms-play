@@ -6,16 +6,16 @@ const corsHeaders = {
 };
 
 function getAiConfig() {
-  const API_KEY = Deno.env.get("GEMINI_API_KEY");
-  if (!API_KEY) throw new Error("GEMINI_API_KEY not configured");
+  const API_KEY = Deno.env.get("OPENAI_API_KEY");
+  if (!API_KEY) throw new Error("OPENAI_API_KEY not configured");
   return {
     apiKey: API_KEY,
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-2.5-flash",
+    url: "https://api.openai.com/v1/chat/completions",
+    model: Deno.env.get("OPENAI_MODEL") || "gpt-4o",
   };
 }
 
-async function callGemini(messages: any[], tool: any): Promise<any> {
+async function callAi(messages: any[], tool: any): Promise<any> {
   const { apiKey, url, model } = getAiConfig();
   for (let attempt = 0; attempt <= 2; attempt++) {
     const res = await fetch(url, {
@@ -33,17 +33,17 @@ async function callGemini(messages: any[], tool: any): Promise<any> {
     if (!res.ok) {
       const body = await res.text();
       if (res.status === 429 && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
         continue;
       }
-      throw new Error(`Gemini error (${res.status}): ${body.slice(0, 300)}`);
+      throw new Error(`OpenAI error (${res.status}): ${body.slice(0, 300)}`);
     }
     const data = await res.json();
     const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall) throw new Error("Gemini no devolvió tool call");
+    if (!toolCall) throw new Error("OpenAI no devolvió tool call");
     return JSON.parse(toolCall.function.arguments);
   }
-  throw new Error("Gemini: máximo de reintentos alcanzado");
+  throw new Error("OpenAI: máximo de reintentos alcanzado");
 }
 
 // Reintenta obtener el transcript hasta que esté disponible
@@ -226,7 +226,7 @@ Deno.serve(async (req) => {
 
   let analysis: any;
   try {
-    analysis = await callGemini(
+    analysis = await callAi(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },

@@ -58,15 +58,13 @@ async function deleteDraftCourseTree(supabase: any, courseId: string) {
 // ---------- AI helpers ----------
 
 function getAiConfig(opts: { fast?: boolean } = {}) {
-  const API_KEY = Deno.env.get("GEMINI_API_KEY");
-  if (!API_KEY) throw new Error("GEMINI_API_KEY not configured");
-  const defaultModel = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+  const API_KEY = Deno.env.get("OPENAI_API_KEY");
+  if (!API_KEY) throw new Error("OPENAI_API_KEY not configured");
+  const defaultModel = Deno.env.get("OPENAI_MODEL") || "gpt-4o";
   return {
     apiKey: API_KEY,
-    // Endpoint OpenAI-compatible de Google Gemini
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    // Flash por defecto para evitar 429 frecuentes del tier gratuito; GEMINI_MODEL permite subir a Pro si hay cuota.
-    model: opts.fast ? "gemini-2.5-flash" : defaultModel,
+    url: "https://api.openai.com/v1/chat/completions",
+    model: opts.fast ? "gpt-4o-mini" : defaultModel,
   };
 }
 
@@ -98,26 +96,25 @@ async function callAi(
         const body = await res.text();
         if (res.status === 401 || res.status === 403) {
           throw new Error(
-            "GEMINI_AUTH_ERROR: La GEMINI_API_KEY es inválida o no tiene permisos. Verifícala en Google AI Studio.",
+            "OPENAI_AUTH_ERROR: La OPENAI_API_KEY es inválida o no tiene permisos. Verifícala en platform.openai.com.",
           );
         }
         if (res.status === 429) {
           if (attempt < maxRetries) {
             lastErr = new Error("AI_RATE_LIMITED");
-            // Backoff largo: free tier de Gemini tiene RPM muy bajo
-            await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
+            await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
             continue;
           }
           throw new Error(
-            "AI_RATE_LIMITED: Demasiadas solicitudes a Gemini. Espera ~1 minuto y vuelve a intentarlo, o usa una API key con plan de pago.",
+            "AI_RATE_LIMITED: Demasiadas solicitudes a OpenAI. Espera unos segundos y reintenta.",
           );
         }
         if (res.status >= 500) {
-          lastErr = new Error(`Gemini error (${res.status}): ${body.slice(0, 200)}`);
+          lastErr = new Error(`OpenAI error (${res.status}): ${body.slice(0, 200)}`);
           await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           continue;
         }
-        throw new Error(`Gemini error (${res.status}): ${body.slice(0, 500)}`);
+        throw new Error(`OpenAI error (${res.status}): ${body.slice(0, 500)}`);
       }
       const data = await res.json();
       const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];

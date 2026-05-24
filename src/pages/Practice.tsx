@@ -8,7 +8,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
-import { useSRS, quality, type SrsItem } from "@/hooks/useSRS";
+import { useSRS, quality, type SrsItem, type Confidence } from "@/hooks/useSRS";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { fireFromButton } from "@/lib/celebrate";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,6 +28,7 @@ const STARTING_LIVES = 3;
 const XP_PER_CORRECT = 5;
 
 type Phase = "loading" | "ready" | "playing" | "summary" | "empty" | "error";
+type SessionResult = { confidence: Confidence | null; correct: boolean };
 
 export default function Practice() {
   const navigate = useNavigate();
@@ -44,6 +45,7 @@ export default function Practice() {
   const [xpEarned, setXpEarned] = useState(0);
   const [livesBonus, setLivesBonus] = useState(0);
   const [startedAt, setStartedAt] = useState<number>(0);
+  const [results, setResults] = useState<SessionResult[]>([]);
 
   // ----- carga inicial -----
   const loadSession = async () => {
@@ -61,6 +63,7 @@ export default function Practice() {
       setXpEarned(0);
       setLivesBonus(0);
       setStartedAt(Date.now());
+      setResults([]);
       setPhase("ready");
     } catch {
       setPhase("error");
@@ -79,16 +82,19 @@ export default function Practice() {
     attempts,
     timeMs,
     btn,
+    confidence,
   }: {
     correct: boolean;
     hadHint?: boolean;
     attempts?: number;
     timeMs?: number;
     btn?: HTMLElement | null;
+    confidence?: Confidence;
   }) => {
     const item = items[idx];
     if (!item) return;
-    const q = quality({ correct, hadHint, attempts, timeMs });
+    setResults((prev) => [...prev, { confidence: confidence ?? null, correct }]);
+    const q = quality({ correct, hadHint, attempts, timeMs, confidence });
     await review(item.id, q);
     // Cada tarjeta repasada cuenta para la misión "srs"
     try {
@@ -270,6 +276,7 @@ export default function Practice() {
           xp={xpEarned}
           livesBonus={livesBonus}
           livesLeft={lives}
+          results={results}
           onAgain={loadSession}
           onExit={() => navigate("/app")}
         />
@@ -288,11 +295,11 @@ type AnswerCb = (a: {
   attempts?: number;
   timeMs?: number;
   btn?: HTMLElement | null;
+  confidence?: Confidence;
 }) => void;
 
 function ItemRunner({
   item,
-  startedAt,
   onAnswered,
   onNext,
 }: {
@@ -303,6 +310,13 @@ function ItemRunner({
 }) {
   const kind = item.payload?.kind ?? item.item_type;
   const [answered, setAnswered] = useState<null | { correct: boolean; correctText: string }>(null);
+  const [confidence, setConfidence] = useState<Confidence | null>(null);
+  const [questionAt, setQuestionAt] = useState<number>(0);
+
+  const handleConfidence = (c: Confidence) => {
+    setConfidence(c);
+    setQuestionAt(Date.now());
+  };
 
   const finish = (correct: boolean, correctText: string, opts?: { hadHint?: boolean; attempts?: number; btn?: HTMLElement | null }) => {
     setAnswered({ correct, correctText });
@@ -310,8 +324,9 @@ function ItemRunner({
       correct,
       hadHint: opts?.hadHint,
       attempts: opts?.attempts,
-      timeMs: Date.now() - startedAt,
+      timeMs: Date.now() - questionAt,
       btn: opts?.btn,
+      confidence: confidence ?? undefined,
     });
   };
 
@@ -329,25 +344,30 @@ function ItemRunner({
           )}
         </div>
 
-        {kind === "term" && (
+        {/* Paso de confianza — antes de ver la pregunta (metacognición) */}
+        {!confidence && (
+          <ConfidencePicker onSelect={handleConfidence} />
+        )}
+
+        {confidence && kind === "term" && (
           <TermItem item={item} answered={answered} onFinish={finish} />
         )}
-        {kind === "mc" && (
+        {confidence && kind === "mc" && (
           <McItem item={item} answered={answered} onFinish={finish} />
         )}
-        {kind === "true_false" && (
+        {confidence && kind === "true_false" && (
           <TfItem item={item} answered={answered} onFinish={finish} />
         )}
-        {kind === "fill_blank" && (
+        {confidence && kind === "fill_blank" && (
           <FbItem item={item} answered={answered} onFinish={finish} />
         )}
-        {kind === "match_pairs" && (
+        {confidence && kind === "match_pairs" && (
           <PairsRecallItem item={item} answered={answered} onFinish={finish} />
         )}
-        {kind === "order_steps" && (
+        {confidence && kind === "order_steps" && (
           <OrderRecallItem item={item} answered={answered} onFinish={finish} />
         )}
-        {!["term", "mc", "true_false", "fill_blank", "match_pairs", "order_steps"].includes(kind) && (
+        {confidence && !["term", "mc", "true_false", "fill_blank", "match_pairs", "order_steps"].includes(kind) && (
           <p className="text-muted-foreground italic">Tipo no soportado: {kind}</p>
         )}
 
@@ -361,6 +381,35 @@ function ItemRunner({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ConfidencePicker({ onSelect }: { onSelect: (c: Confidence) => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-3 py-2 text-center"
+    >
+      <p className="text-xs text-muted-foreground uppercase tracking-wide">Antes de ver la pregunta</p>
+      <p className="text-sm font-semibold">¿Cuánto crees que recuerdas esto?</p>
+      <div className="flex justify-center gap-3">
+        {([
+          { value: "low" as Confidence, emoji: "😬", label: "Poco" },
+          { value: "medium" as Confidence, emoji: "🤔", label: "Algo" },
+          { value: "high" as Confidence, emoji: "😊", label: "Bastante" },
+        ]).map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => onSelect(opt.value)}
+            className="flex flex-col items-center gap-1 px-5 py-3 rounded-xl border-2 border-border hover:border-primary/40 hover:bg-primary/5 transition-all"
+          >
+            <span className="text-2xl">{opt.emoji}</span>
+            <span className="text-xs font-medium">{opt.label}</span>
+          </button>
+        ))}
+      </div>
+    </motion.div>
   );
 }
 
@@ -379,19 +428,41 @@ function labelFor(kind: string) {
 function FeedbackBox({
   correct, correctText, explanation, onNext,
 }: { correct: boolean; correctText: string; explanation?: string; onNext: () => void }) {
+  if (!correct) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="rounded-lg bg-destructive/10 text-destructive p-4 space-y-3 text-sm"
+      >
+        <div className="flex items-start gap-2">
+          <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <p className="font-semibold">Respuesta correcta: {correctText}</p>
+        </div>
+        {explanation && (
+          <div className="rounded-lg bg-destructive/5 border border-destructive/20 px-3 py-2.5">
+            <p className="text-[11px] font-semibold text-destructive/70 mb-1 uppercase tracking-wide">¿Por qué?</p>
+            <p className="text-xs text-foreground leading-relaxed">{explanation}</p>
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground italic">
+          Leer la explicación mejora la retención hasta un 40% (Pressley, 1987).
+        </p>
+        <Button size="sm" variant="outline" onClick={onNext} className="w-full">
+          Entendido, continuar <ArrowRight className="w-3 h-3 ml-1" />
+        </Button>
+      </motion.div>
+    );
+  }
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`p-3 rounded-lg flex items-start gap-2 text-sm ${
-        correct ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"
-      }`}
+      className="p-3 rounded-lg flex items-start gap-2 text-sm bg-success/10 text-success"
     >
-      {correct ? <CheckCircle2 className="w-4 h-4 mt-0.5" /> : <XCircle className="w-4 h-4 mt-0.5" />}
+      <CheckCircle2 className="w-4 h-4 mt-0.5" />
       <div className="flex-1">
-        <p className="font-semibold">
-          {correct ? "¡Correcto!" : `Respuesta correcta: ${correctText}`}
-        </p>
+        <p className="font-semibold">¡Correcto!</p>
         {explanation && <p className="text-xs opacity-80 mt-1">{explanation}</p>}
       </div>
       <Button size="sm" onClick={onNext}>
@@ -669,10 +740,50 @@ function OrderRecallItem({ item, answered, onFinish }: any) {
 // =====================================================================
 // Resumen final
 // =====================================================================
+function CalibrationInsight({ results }: { results: SessionResult[] }) {
+  const withConf = results.filter((r) => r.confidence !== null);
+  if (withConf.length === 0) return null;
+
+  const overconfident = withConf.filter((r) => r.confidence === "high" && !r.correct).length;
+  const uncertainRight = withConf.filter((r) => r.confidence === "low" && r.correct).length;
+
+  if (overconfident >= 2) {
+    return (
+      <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 text-left text-sm">
+        <p className="font-semibold text-amber-800 dark:text-amber-200 mb-1">💡 Calibración de hoy</p>
+        <p className="text-amber-700 dark:text-amber-300 text-xs leading-relaxed">
+          Creías recordar bien <b>{overconfident} preguntas</b>, pero la respuesta fue incorrecta.
+          Reconocer esto es el primer paso para aprender de verdad.
+        </p>
+      </div>
+    );
+  }
+  if (uncertainRight >= 2) {
+    return (
+      <div className="rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-left text-sm">
+        <p className="font-semibold text-success mb-1">🎯 Calibración de hoy</p>
+        <p className="text-success/80 text-xs leading-relaxed">
+          ¡Sabías <b>{uncertainRight} preguntas</b> más de lo que creías.
+          Tu memoria está más fuerte de lo que sientes.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border bg-muted/40 px-4 py-3 text-left text-sm">
+      <p className="font-semibold text-foreground mb-1">✓ Calibración de hoy</p>
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        Tu nivel de confianza fue bastante preciso. Eso indica buena metacognición.
+      </p>
+    </div>
+  );
+}
+
 function Summary({
-  correct, total, xp, livesBonus, livesLeft, onAgain, onExit,
+  correct, total, xp, livesBonus, livesLeft, results, onAgain, onExit,
 }: {
   correct: number; total: number; xp: number; livesBonus: number; livesLeft: number;
+  results: SessionResult[];
   onAgain: () => void; onExit: () => void;
 }) {
   const pct = total ? Math.round((correct / total) * 100) : 0;
@@ -714,6 +825,9 @@ function Summary({
         <p className="text-muted-foreground text-sm">
           Precisión: <b>{pct}%</b>
         </p>
+        <div className="max-w-sm mx-auto w-full">
+          <CalibrationInsight results={results} />
+        </div>
         <div className="flex flex-wrap justify-center gap-2 pt-2">
           <Button onClick={onAgain} variant="outline">
             <RefreshCw className="w-4 h-4 mr-2" /> Otra sesión
